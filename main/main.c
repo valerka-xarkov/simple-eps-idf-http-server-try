@@ -65,7 +65,7 @@ static void blink_led_task_implementation(void *pvParameters)
     const int times = task_parameters->times;
     const int intervalMs = task_parameters->intervalMs;
     free(task_parameters);
-    // ESP_LOGI(TAG, "Memory has beed freed, values in BlinkImplementation: times = %d, intervalMs = %d", times, intervalMs);
+    ESP_LOGI(TAG, "Memory has beed freed, values in BlinkImplementation: times = %d, intervalMs = %d", times, intervalMs);
 
     TickType_t ticks = pdMS_TO_TICKS(intervalMs);
 
@@ -81,7 +81,6 @@ static void blink_led_task_implementation(void *pvParameters)
     if (xSemaphoreTake(blinking_mutex, pdMS_TO_TICKS(50)))
     {
 
-        // ESP_LOGI(TAG, "Stack watermark %d", uxTaskGetStackHighWaterMark(blink_task_handle));
         ESP_LOGI(TAG, "Semaphore taken in blinking implementation");
         blink_task_handle = NULL;
         xSemaphoreGive(blinking_mutex);
@@ -146,16 +145,13 @@ static esp_err_t led_blink_handler(httpd_req_t *req)
 
         if (blink_task_handle != NULL)
         {
-            // ESP_LOGI(TAG, "Deleted Task %d", blink_task_handle);
             vTaskDelete(blink_task_handle);
+            ESP_LOGI(TAG, "Deleted Task %d", blink_task_handle);
             blink_task_handle = NULL;
-            // ESP_LOGI(TAG, "All Free Memory after task deletion: %d", heap_caps_get_free_size(MALLOC_CAP_DEFAULT));
-            // ESP_LOGI(TAG, "Memory after task deletion: %u", xPortGetFreeHeapSize());
         }
         struct BlinkTaskParams *task_parameters = malloc(sizeof(struct BlinkTaskParams));
         task_parameters->intervalMs = intervalMs;
         task_parameters->times = times;
-        // ESP_LOGI(TAG, "Values sent to the handle: times = %d, intervalMs = %d", task_parameters->times, task_parameters->intervalMs);
         const int priority = uxTaskPriorityGet(NULL);
         int xReturned = xTaskCreatePinnedToCore(blink_led_task_implementation, "blink_led_task", 8192, (void *)task_parameters, priority, &blink_task_handle, 0);
         if (xReturned == pdFAIL)
@@ -170,7 +166,7 @@ static esp_err_t led_blink_handler(httpd_req_t *req)
         ESP_LOGI(TAG, "Error happen while runnning while creating blinking task");
     }
 
-    // ESP_LOGI(TAG, "blink_task_handle value %d", (int)&blink_task_handle);
+    ESP_LOGI(TAG, "blink_task_handle value %d", (int)&blink_task_handle);
 
     httpd_resp_sendstr(req, "{\"success\": true}");
     return ESP_OK;
@@ -354,4 +350,5 @@ void app_main(void)
 
     blinking_mutex = xSemaphoreCreateMutex();
     ESP_LOGI(TAG, "Memory Usage after initialization: %u bytes", xPortGetFreeHeapSize());
+    // esp_log_level_set("*", ESP_LOG_NONE);
 }
