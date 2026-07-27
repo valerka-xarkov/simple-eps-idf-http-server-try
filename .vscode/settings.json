@@ -5,7 +5,7 @@
   "clangd.arguments": [
     "--background-index",
     "--query-driver=**",
-    "--compile-commands-dir=d:\\dev\\milkmama\\wifi-2-try\\build"
+    "--compile-commands-dir=d:\\dev\\simple-eps-idf-http-server-try\\build"
   ],
   "idf.currentSetup": "C:\\esp\\v6.0.2\\esp-idf",
   "idf.openOcdConfigs": [
