@@ -7,7 +7,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
-#include <lwip/sockets.h>
+#include "lwip/sockets.h"
 
 #define OUTPUT_LED 22
 #define MAX_POST_SIZE 220
@@ -39,13 +39,14 @@ static esp_err_t led_toggle_handler(httpd_req_t *req)
 {
     if (xSemaphoreTake(blinking_mutex, pdMS_TO_TICKS(50)))
     {
-
+        ESP_LOGI(TAG, "Semaphore taken in toggle handler");
         if (blink_task_handle != NULL)
         {
-            ESP_LOGI(TAG, "Task %d Deleted", blink_task_handle);
             vTaskDelete(blink_task_handle);
+            blink_task_handle = NULL;
         }
         xSemaphoreGive(blinking_mutex);
+        ESP_LOGI(TAG, "Semaphore given in toggle handler");
     }
     bool isLedOn = LED_ON == led_status;
     led_status = isLedOn ? LED_OFF : LED_ON;
@@ -59,13 +60,14 @@ static esp_err_t led_toggle_handler(httpd_req_t *req)
 
 static void blink_led_task_implementation(void *pvParameters)
 {
+    ESP_LOGI(TAG, "BlinkImplementation started on core 0");
     struct BlinkTaskParams *task_parameters = pvParameters;
     const int times = task_parameters->times;
     const int intervalMs = task_parameters->intervalMs;
     free(task_parameters);
-    ESP_LOGI(TAG, "BlinkTask running on core %d", xPortGetCoreID());
+    // ESP_LOGI(TAG, "Memory has beed freed, values in BlinkImplementation: times = %d, intervalMs = %d", times, intervalMs);
+
     TickType_t ticks = pdMS_TO_TICKS(intervalMs);
-    ESP_LOGI(TAG, "Values: times = %d, intervalMs = %d, ticks = %d", times, intervalMs, ticks);
 
     for (int i = 0; i <= times; i++)
     {
@@ -75,12 +77,15 @@ static void blink_led_task_implementation(void *pvParameters)
         vTaskDelay(ticks);
     }
     ESP_LOGI(TAG, "Blink finished");
+
     if (xSemaphoreTake(blinking_mutex, pdMS_TO_TICKS(50)))
     {
 
-        ESP_LOGI(TAG, "Stack watermark %d", uxTaskGetStackHighWaterMark(blink_task_handle));
+        // ESP_LOGI(TAG, "Stack watermark %d", uxTaskGetStackHighWaterMark(blink_task_handle));
+        ESP_LOGI(TAG, "Semaphore taken in blinking implementation");
         blink_task_handle = NULL;
         xSemaphoreGive(blinking_mutex);
+        ESP_LOGI(TAG, "Semaphore given in blinking implementation");
     }
     else
     {
@@ -108,7 +113,7 @@ static esp_err_t led_blink_handler(httpd_req_t *req)
     char buf[total_len];
     if (httpd_req_recv(req, buf, total_len) <= 0)
     {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "{\"error\": \"Failed to recieve POST body\"}");
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "{\"error\": \"Failed to receive POST body\"}");
         return ESP_FAIL;
     }
     buf[total_len] = '\0';
@@ -136,25 +141,36 @@ static esp_err_t led_blink_handler(httpd_req_t *req)
 
     if (xSemaphoreTake(blinking_mutex, pdMS_TO_TICKS(50)))
     {
+
+        ESP_LOGI(TAG, "Semaphore taken in http-handler");
+
         if (blink_task_handle != NULL)
         {
-            ESP_LOGI(TAG, "Task %d Deleted", blink_task_handle);
+            // ESP_LOGI(TAG, "Deleted Task %d", blink_task_handle);
             vTaskDelete(blink_task_handle);
+            blink_task_handle = NULL;
+            // ESP_LOGI(TAG, "All Free Memory after task deletion: %d", heap_caps_get_free_size(MALLOC_CAP_DEFAULT));
+            // ESP_LOGI(TAG, "Memory after task deletion: %u", xPortGetFreeHeapSize());
         }
         struct BlinkTaskParams *task_parameters = malloc(sizeof(struct BlinkTaskParams));
         task_parameters->intervalMs = intervalMs;
         task_parameters->times = times;
-        ESP_LOGI(TAG, "Values sent to the handle: times = %d, intervalMs = %d", task_parameters->times, task_parameters->intervalMs);
-
-        xTaskCreate(blink_led_task_implementation, "blink_led_task", 2048, (void *)task_parameters, 1, &blink_task_handle);
+        // ESP_LOGI(TAG, "Values sent to the handle: times = %d, intervalMs = %d", task_parameters->times, task_parameters->intervalMs);
+        const int priority = uxTaskPriorityGet(NULL);
+        int xReturned = xTaskCreatePinnedToCore(blink_led_task_implementation, "blink_led_task", 8192, (void *)task_parameters, priority, &blink_task_handle, 0);
+        if (xReturned == pdFAIL)
+        {
+            ESP_LOGI(TAG, "xTaskCreate Failed");
+        }
         xSemaphoreGive(blinking_mutex);
+        ESP_LOGI(TAG, "Semaphore given in http-handler");
     }
     else
     {
         ESP_LOGI(TAG, "Error happen while runnning while creating blinking task");
     }
 
-    ESP_LOGI(TAG, "blink_task_handle value %d", (int)&blink_task_handle);
+    // ESP_LOGI(TAG, "blink_task_handle value %d", (int)&blink_task_handle);
 
     httpd_resp_sendstr(req, "{\"success\": true}");
     return ESP_OK;
@@ -184,13 +200,12 @@ static const httpd_uri_t led_blink = {
 static void configure_led(void)
 {
     gpio_reset_pin(OUTPUT_LED);
-    /* Set the GPIO as push/pull output */
     gpio_set_direction(OUTPUT_LED, GPIO_MODE_OUTPUT);
     gpio_set_level(OUTPUT_LED, 1);
     ESP_LOGI(TAG, "LED Configured!\n");
 }
-static int s_retry_num = 0;
 
+static int s_retry_num = 0;
 static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
 {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START)
@@ -199,7 +214,7 @@ static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_
     }
     else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED)
     {
-        ESP_LOGI(TAG, "WIFI disconected");
+        ESP_LOGI(TAG, "WIFI disconnected");
 
         if (s_retry_num < CONFIG_ESP_MAXIMUM_RETRY)
         {
@@ -229,7 +244,13 @@ void wifi_init_sta(void)
     ESP_ERROR_CHECK(esp_netif_init());
 
     ESP_ERROR_CHECK(esp_event_loop_create_default());
-    esp_netif_create_default_wifi_sta();
+    esp_netif_t *sta_netif = esp_netif_create_default_wifi_sta();
+    esp_netif_dhcpc_stop(sta_netif);
+    esp_netif_ip_info_t ip_info;
+    IP4_ADDR(&ip_info.ip, 192, 168, 1, 111);
+    IP4_ADDR(&ip_info.gw, 192, 168, 1, 1);
+    IP4_ADDR(&ip_info.netmask, 255, 255, 255, 0);
+    esp_netif_set_ip_info(sta_netif, &ip_info);
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
@@ -307,7 +328,7 @@ httpd_handle_t start_webserver()
     config.lru_purge_enable = true;
     config.max_open_sockets = 7;
     config.open_fn = open_fn; // THIS LINE IS SPEEDING UP esp_http_server RESPONSE FROM 65ms TO 10ms
-
+    config.core_id = 1;       // Improves performance on "Hello world" page from 320/s to 350/s
     if (httpd_start(&server, &config) == ESP_OK)
     {
         ESP_LOGI(TAG, "Server started successfully, registering URI handlers...");
