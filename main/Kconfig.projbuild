@@ -3,18 +3,42 @@ menu "Wifi Auth Configuration"
     config ESP_WIFI_SSID
         string "WiFi SSID"
         default "myssid"
-        help
-            SSID (network name) for the example to connect to.
 
     config ESP_WIFI_PASSWORD
         string "WiFi Password"
         default "mypassword"
-        help
-            WiFi password (WPA or WPA2) for the example to use.
 
     config ESP_MAXIMUM_RETRY
         int "Maximum retry"
         default 5
         help
             Set the Maximum retry to avoid station reconnecting to the AP unlimited when the AP is really inexistent.
+endmenu
+
+menu "Time configuration"
+
+    config SNTP_TIME_SERVER
+        string "time.windows.com"
+        default "pool.ntp.org"
+        help
+            Hostname of the main SNTP server.
+endmenu
+
+menu "IP Address Configuration"
+    
+    config STATIC_IP_ADDR
+        string "Static IP address"
+        default "192.168.1.111"
+
+    config STATIC_NETMASK_ADDR
+        string "Static netmask address"
+        default "255.255.255.0"
+
+    config STATIC_GW_ADDR
+        string "Static gateway address"
+        default "192.168.1.1"
+
+    config STATIC_DNS_SERVER_MAIN
+        string "Main DNS server address"
+        default "192.168.1.1"
 endmenu

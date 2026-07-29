@@ -8,6 +8,7 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "lwip/sockets.h"
+#include "time_set_up.h"
 
 #define OUTPUT_LED 22
 #define MAX_POST_SIZE 220
@@ -22,7 +23,7 @@ int led_status = LED_OFF;
 TaskHandle_t blink_task_handle = NULL;
 static EventGroupHandle_t s_wifi_event_group;
 
-struct BlinkTaskParams
+struct blink_task_params
 {
     int times;
     int intervalMs;
@@ -61,7 +62,7 @@ static esp_err_t led_toggle_handler(httpd_req_t *req)
 static void blink_led_task_implementation(void *pvParameters)
 {
     ESP_LOGI(TAG, "BlinkImplementation started on core 0");
-    struct BlinkTaskParams *task_parameters = pvParameters;
+    struct blink_task_params *task_parameters = pvParameters;
     const int times = task_parameters->times;
     const int intervalMs = task_parameters->intervalMs;
     free(task_parameters);
@@ -149,7 +150,7 @@ static esp_err_t led_blink_handler(httpd_req_t *req)
             ESP_LOGI(TAG, "Deleted Task %d", blink_task_handle);
             blink_task_handle = NULL;
         }
-        struct BlinkTaskParams *task_parameters = malloc(sizeof(struct BlinkTaskParams));
+        struct blink_task_params *task_parameters = malloc(sizeof(struct blink_task_params));
         task_parameters->intervalMs = intervalMs;
         task_parameters->times = times;
         const int priority = uxTaskPriorityGet(NULL);
@@ -243,10 +244,15 @@ void wifi_init_sta(void)
     esp_netif_t *sta_netif = esp_netif_create_default_wifi_sta();
     esp_netif_dhcpc_stop(sta_netif);
     esp_netif_ip_info_t ip_info;
-    IP4_ADDR(&ip_info.ip, 192, 168, 1, 111);
-    IP4_ADDR(&ip_info.gw, 192, 168, 1, 1);
-    IP4_ADDR(&ip_info.netmask, 255, 255, 255, 0);
+    ip_info.ip.addr = ipaddr_addr(CONFIG_STATIC_IP_ADDR);
+    ip_info.netmask.addr = ipaddr_addr(CONFIG_STATIC_NETMASK_ADDR);
+    ip_info.gw.addr = ipaddr_addr(CONFIG_STATIC_GW_ADDR);
+
     esp_netif_set_ip_info(sta_netif, &ip_info);
+    esp_netif_dns_info_t dns;
+    dns.ip.u_addr.ip4.addr = ipaddr_addr(CONFIG_STATIC_DNS_SERVER_MAIN);
+    dns.ip.type = IPADDR_TYPE_V4;
+    esp_netif_set_dns_info(sta_netif, ESP_NETIF_DNS_MAIN, &dns);
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
@@ -268,11 +274,6 @@ void wifi_init_sta(void)
         .sta = {
             .ssid = CONFIG_ESP_WIFI_SSID,
             .password = CONFIG_ESP_WIFI_PASSWORD,
-            /* Authmode threshold resets to WPA2 as default if password matches WPA2 standards (password len => 8).
-             * If you want to connect the device to deprecated WEP/WPA networks, Please set the threshold value
-             * to WIFI_AUTH_WEP/WIFI_AUTH_WPA_PSK and set the password with length and format matching to
-             * WIFI_AUTH_WEP/WIFI_AUTH_WPA_PSK standards.
-             */
             .threshold.authmode = WIFI_AUTH_WPA2_PSK,
         },
     };
@@ -299,11 +300,11 @@ void wifi_init_sta(void)
      * happened. */
     if (bits & WIFI_CONNECTED_BIT)
     {
-        ESP_LOGI(TAG, "connected to ap SSID:%s password:%s", CONFIG_ESP_WIFI_SSID, CONFIG_ESP_WIFI_PASSWORD);
+        ESP_LOGI(TAG, "connected to ap SSID:%s ", CONFIG_ESP_WIFI_SSID);
     }
     else if (bits & WIFI_FAIL_BIT)
     {
-        ESP_LOGI(TAG, "Failed to connect to SSID:%s, password:%s", CONFIG_ESP_WIFI_SSID, CONFIG_ESP_WIFI_PASSWORD);
+        ESP_LOGI(TAG, "Failed to connect to SSID:%s", CONFIG_ESP_WIFI_SSID);
     }
     else
     {
@@ -338,6 +339,7 @@ httpd_handle_t start_webserver()
 void app_main(void)
 {
     ESP_LOGI(TAG, "Memory Usage Initial Free Heap: %u bytes", xPortGetFreeHeapSize());
+    blinking_mutex = xSemaphoreCreateMutex();
 
     configure_led();
     wifi_init_sta();
@@ -348,7 +350,8 @@ void app_main(void)
     httpd_register_uri_handler(server, &led_toggle);
     httpd_register_uri_handler(server, &led_blink);
 
-    blinking_mutex = xSemaphoreCreateMutex();
+    set_up_time();
+
     ESP_LOGI(TAG, "Memory Usage after initialization: %u bytes", xPortGetFreeHeapSize());
     // esp_log_level_set("*", ESP_LOG_NONE);
 }

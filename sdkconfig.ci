@@ -1,0 +1,1 @@
+CONFIG_SNTP_TIME_SERVER="time.windows.com"
