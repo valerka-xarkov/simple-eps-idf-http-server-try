@@ -1,33 +1,45 @@
-#include "esp_wifi.h"
 #include "string.h"
 #include "esp_log.h"
 #include "esp_http_server.h"
 #include "driver/gpio.h"
 #include "cJSON.h"
+#include "zlib.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "lwip/sockets.h"
 #include "time_set_up.h"
+#include "request_counter.h"
+#include "wifi_config.h"
 
+#define CHUNK_SIZE 4096
 #define OUTPUT_LED 22
 #define MAX_POST_SIZE 220
 #define LED_ON 0
 #define LED_OFF 1
-#define WIFI_CONNECTED_BIT BIT0
-#define WIFI_FAIL_BIT BIT1
 
 SemaphoreHandle_t blinking_mutex;
 static const char *TAG = "main";
 int led_status = LED_OFF;
 TaskHandle_t blink_task_handle = NULL;
-static EventGroupHandle_t s_wifi_event_group;
 
 struct blink_task_params
 {
     int times;
     int intervalMs;
 };
+
+// Define a structure to hold your persistent buffers and stream context
+typedef struct
+{
+    z_stream strm;
+    uint8_t *in_buf;
+    uint8_t *out_buf;
+    bool is_initialized;
+} global_zlib_ctx_t;
+
+// Instantiate the global workspace variable
+static global_zlib_ctx_t g_zlib = {.is_initialized = false};
 
 static esp_err_t hello_get_handler(httpd_req_t *req)
 {
@@ -97,6 +109,7 @@ static void blink_led_task_implementation(void *pvParameters)
 static esp_err_t led_blink_handler(httpd_req_t *req)
 {
 
+    httpd_resp_set_type(req, "application/json");
     const int total_len = req->content_len;
     if (total_len > MAX_POST_SIZE)
     {
@@ -173,6 +186,77 @@ static esp_err_t led_blink_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+esp_err_t gzip_minify_handler(httpd_req_t *req, char *generated_content)
+{
+    httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+
+    z_stream *p_strm = &g_zlib.strm;
+    uint8_t *in_buf = g_zlib.in_buf;
+    uint8_t *out_buf = g_zlib.out_buf;
+
+    size_t content_bytes_left = strlen(generated_content);
+    const char *content_ptr = generated_content;
+    bool flush_flag = false;
+
+    do
+    {
+        size_t bytes_to_read = (content_bytes_left > CHUNK_SIZE) ? CHUNK_SIZE : content_bytes_left;
+        memcpy(in_buf, content_ptr, bytes_to_read);
+
+        content_ptr += bytes_to_read;
+        content_bytes_left -= bytes_to_read;
+
+        p_strm->next_in = in_buf;
+        p_strm->avail_in = bytes_to_read;
+
+        if (content_bytes_left == 0)
+        {
+            flush_flag = true;
+        }
+        do
+        {
+            p_strm->next_out = out_buf;
+            p_strm->avail_out = CHUNK_SIZE;
+
+            // Execute compression using persistent buffers
+            int ret = deflate(p_strm, flush_flag ? Z_FINISH : Z_NO_FLUSH);
+            if (ret == Z_STREAM_ERROR)
+            {
+                ESP_LOGE(TAG, "Zlib engine execution error");
+                deflateReset(p_strm); // Clean up context state even on failure
+                return ESP_FAIL;
+            }
+
+            size_t compressed_bytes = CHUNK_SIZE - p_strm->avail_out;
+            if (compressed_bytes > 0)
+            {
+                esp_err_t err = httpd_resp_send_chunk(req, (const char *)out_buf, compressed_bytes);
+                if (err != ESP_OK)
+                {
+                    deflateReset(p_strm); // Clean up if browser abruptly closes the socket
+                    return ESP_FAIL;
+                }
+            }
+        } while (p_strm->avail_out == 0);
+
+    } while (!flush_flag);
+
+    deflateReset(p_strm);
+
+    httpd_resp_send_chunk(req, NULL, 0);
+    return ESP_OK;
+}
+
+static esp_err_t get_requests_quantity_handler(httpd_req_t *req)
+{
+    http_info_request_happen();
+    httpd_resp_set_type(req, "application/json");
+    char *resp_str = get_requests_information_char();
+    // httpd_resp_send(req, resp_str, HTTPD_RESP_USE_STRLEN);
+    gzip_minify_handler(req, resp_str);
+    return ESP_OK;
+}
+
 static const httpd_uri_t hello_world_uri = {
     .uri = "/",
     .method = HTTP_GET,
@@ -194,6 +278,30 @@ static const httpd_uri_t led_blink = {
     .user_ctx = NULL,
 };
 
+static const httpd_uri_t get_requests_quantity = {
+    .uri = "/requests-quantity",
+    .method = HTTP_GET,
+    .handler = get_requests_quantity_handler,
+    .user_ctx = NULL,
+};
+
+esp_err_t init_global_zlib(void)
+{
+    g_zlib.in_buf = malloc(CHUNK_SIZE);
+    g_zlib.out_buf = malloc(CHUNK_SIZE);
+
+    g_zlib.strm.zalloc = Z_NULL;
+    g_zlib.strm.zfree = Z_NULL;
+    g_zlib.strm.opaque = Z_NULL;
+    // windowBits = 13 + 16 (Gzip output wrapper) = 29 memLevel = 6
+    int ret = deflateInit2(&g_zlib.strm, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 29, 6, Z_DEFAULT_STRATEGY);
+    if (ret == Z_OK)
+    {
+        ESP_LOGI(TAG, "Global Zlib initialized successfully. 64KB allocated permanently.");
+    }
+    return ESP_OK;
+}
+
 static void configure_led(void)
 {
     gpio_reset_pin(OUTPUT_LED);
@@ -202,115 +310,6 @@ static void configure_led(void)
     ESP_LOGI(TAG, "LED Configured!\n");
 }
 
-static int s_retry_num = 0;
-static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
-{
-    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START)
-    {
-        esp_wifi_connect();
-    }
-    else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED)
-    {
-        ESP_LOGI(TAG, "WIFI disconnected");
-
-        if (s_retry_num < CONFIG_ESP_MAXIMUM_RETRY)
-        {
-            esp_wifi_connect();
-            s_retry_num++;
-            ESP_LOGI(TAG, "retry to connect to the AP");
-        }
-        else
-        {
-            xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
-        }
-        ESP_LOGI(TAG, "connect to the AP fail");
-    }
-    else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP)
-    {
-        ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
-        ESP_LOGI(TAG, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
-        s_retry_num = 0;
-        xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
-    }
-}
-
-void wifi_init_sta(void)
-{
-    s_wifi_event_group = xEventGroupCreate();
-
-    ESP_ERROR_CHECK(esp_netif_init());
-
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-    esp_netif_t *sta_netif = esp_netif_create_default_wifi_sta();
-    esp_netif_dhcpc_stop(sta_netif);
-    esp_netif_ip_info_t ip_info;
-    ip_info.ip.addr = ipaddr_addr(CONFIG_STATIC_IP_ADDR);
-    ip_info.netmask.addr = ipaddr_addr(CONFIG_STATIC_NETMASK_ADDR);
-    ip_info.gw.addr = ipaddr_addr(CONFIG_STATIC_GW_ADDR);
-
-    esp_netif_set_ip_info(sta_netif, &ip_info);
-    esp_netif_dns_info_t dns;
-    dns.ip.u_addr.ip4.addr = ipaddr_addr(CONFIG_STATIC_DNS_SERVER_MAIN);
-    dns.ip.type = IPADDR_TYPE_V4;
-    esp_netif_set_dns_info(sta_netif, ESP_NETIF_DNS_MAIN, &dns);
-
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-
-    esp_event_handler_instance_t instance_any_id;
-    esp_event_handler_instance_t instance_got_ip;
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT,
-                                                        ESP_EVENT_ANY_ID,
-                                                        &event_handler,
-                                                        NULL,
-                                                        &instance_any_id));
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT,
-                                                        IP_EVENT_STA_GOT_IP,
-                                                        &event_handler,
-                                                        NULL,
-                                                        &instance_got_ip));
-
-    wifi_config_t wifi_config = {
-        .sta = {
-            .ssid = CONFIG_ESP_WIFI_SSID,
-            .password = CONFIG_ESP_WIFI_PASSWORD,
-            .threshold.authmode = WIFI_AUTH_WPA2_PSK,
-        },
-    };
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
-    ESP_ERROR_CHECK(esp_wifi_start());
-
-    esp_err_t err = esp_wifi_set_ps(WIFI_PS_NONE);
-    if (err == ESP_OK)
-    {
-        ESP_LOGI("WIFI", "Power save disabled successfully.");
-    }
-    ESP_LOGI(TAG, "wifi_init_sta finished.");
-
-    /* Waiting until either the connection is established (WIFI_CONNECTED_BIT) or connection failed for the maximum
-     * number of re-tries (WIFI_FAIL_BIT). The bits are set by event_handler() (see above) */
-    EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
-                                           WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
-                                           pdFALSE,
-                                           pdFALSE,
-                                           portMAX_DELAY);
-
-    /* xEventGroupWaitBits() returns the bits before the call returned, hence we can test which event actually
-     * happened. */
-    if (bits & WIFI_CONNECTED_BIT)
-    {
-        ESP_LOGI(TAG, "connected to ap SSID:%s ", CONFIG_ESP_WIFI_SSID);
-    }
-    else if (bits & WIFI_FAIL_BIT)
-    {
-        ESP_LOGI(TAG, "Failed to connect to SSID:%s", CONFIG_ESP_WIFI_SSID);
-    }
-    else
-    {
-        ESP_LOGE(TAG, "UNEXPECTED EVENT");
-    }
-}
 esp_err_t open_fn(httpd_handle_t hd, int sockfd)
 {
     int val = 1;
@@ -322,7 +321,7 @@ httpd_handle_t start_webserver()
 {
     httpd_handle_t server = NULL;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.lru_purge_enable = true;
+    config.lru_purge_enable = false;
     config.max_open_sockets = 7;
     config.open_fn = open_fn; // THIS LINE IS SPEEDING UP esp_http_server RESPONSE FROM 65ms TO 10ms
     config.core_id = 1;       // Improves performance on "Hello world" page from 320/s to 350/s
@@ -344,14 +343,18 @@ void app_main(void)
     configure_led();
     wifi_init_sta();
 
+    set_up_time();
+    init_global_zlib();
+
     httpd_handle_t server = start_webserver();
 
     httpd_register_uri_handler(server, &hello_world_uri);
     httpd_register_uri_handler(server, &led_toggle);
     httpd_register_uri_handler(server, &led_blink);
+    httpd_register_uri_handler(server, &get_requests_quantity);
 
-    set_up_time();
+    init_http_info_requests_counter();
 
-    ESP_LOGI(TAG, "Memory Usage after initialization: %u bytes", xPortGetFreeHeapSize());
+    ESP_LOGI(TAG, "Free memory left: %u bytes", xPortGetFreeHeapSize());
     // esp_log_level_set("*", ESP_LOG_NONE);
 }
