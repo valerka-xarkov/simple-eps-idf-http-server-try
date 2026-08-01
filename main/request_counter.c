@@ -1,4 +1,5 @@
 #include "stdatomic.h"
+#include "cJSON.h"
 #include <stdio.h>
 #include <time.h>
 #include <string.h>
@@ -62,33 +63,37 @@ void http_info_request_happen()
     last_second_requests_count++;
 }
 
-char *get_requests_information_char()
+char *get_requests_information_http()
 {
     if (result_buf[0] != 0)
     {
         return result_buf;
     }
 
-    sprintf(result_buf, "{\"count\": %d, \"items\": [", size);
-
-    char item_string[REQUEST_INFO_ITERM_JSON_LENGTH] = "";
     struct tm *info;
     char formatted_date[30];
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddNumberToObject(root, "count", size);
+    cJSON *items = cJSON_AddArrayToObject(root, "items");
 
     for (int i = 0; i < size; i++)
     {
         int index = size >= QUEUE_SIZE ? (head + i) % 100 : i;
-
         time_t time = requests_information[index].time;
         int requests_quantity = requests_information[index].requests_quantity;
         info = localtime(&time);
-
         strftime(formatted_date, sizeof(formatted_date), "%Y-%m-%d %H:%M:%S", info);
-        char *comma = (i + 1) == size ? "" : ",";
-        sprintf(item_string, "{\"time\": %lld, \"requestsQuantity\": %d, \"dateTime\": \"%s\"}%s", time, requests_quantity, formatted_date, comma);
-        strcat(result_buf, item_string);
-    }
-    strcat(result_buf, "]}\n");
 
+        cJSON *statistic_item = cJSON_CreateObject();
+        cJSON_AddNumberToObject(statistic_item, "time", time);
+        cJSON_AddNumberToObject(statistic_item, "requestsQuantity", requests_quantity);
+        cJSON_AddStringToObject(statistic_item, "dateTime", formatted_date);
+        cJSON_AddItemToArray(items, statistic_item);
+    }
+
+    char *res = cJSON_PrintUnformatted(root);
+    strcpy(result_buf, res);
+    free(res);
+    cJSON_Delete(root);
     return result_buf;
 }

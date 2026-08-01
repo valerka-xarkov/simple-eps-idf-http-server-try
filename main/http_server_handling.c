@@ -9,6 +9,7 @@
 #include "cJSON.h"
 #include "lwip/sockets.h"
 #include "request_counter.h"
+#include "esp_timer.h"
 
 #define CHUNK_SIZE 4096
 #define OUTPUT_LED 22
@@ -51,14 +52,12 @@ static esp_err_t led_toggle_handler(httpd_req_t *req)
 {
     if (xSemaphoreTake(blinking_mutex, pdMS_TO_TICKS(50)))
     {
-        ESP_LOGI(TAG, "Semaphore taken in toggle handler");
         if (blink_task_handle != NULL)
         {
             vTaskDelete(blink_task_handle);
             blink_task_handle = NULL;
         }
         xSemaphoreGive(blinking_mutex);
-        ESP_LOGI(TAG, "Semaphore given in toggle handler");
     }
     bool isLedOn = LED_ON == led_status;
     led_status = isLedOn ? LED_OFF : LED_ON;
@@ -72,12 +71,10 @@ static esp_err_t led_toggle_handler(httpd_req_t *req)
 
 static void blink_led_task_implementation(void *pvParameters)
 {
-    ESP_LOGI(TAG, "BlinkImplementation started on core 0");
     struct blink_task_params *task_parameters = pvParameters;
     const int times = task_parameters->times;
     const int intervalMs = task_parameters->intervalMs;
     free(task_parameters);
-    ESP_LOGI(TAG, "Memory has beed freed, values in BlinkImplementation: times = %d, intervalMs = %d", times, intervalMs);
 
     TickType_t ticks = pdMS_TO_TICKS(intervalMs);
 
@@ -93,7 +90,6 @@ static void blink_led_task_implementation(void *pvParameters)
     if (xSemaphoreTake(blinking_mutex, pdMS_TO_TICKS(50)))
     {
 
-        ESP_LOGI(TAG, "Semaphore taken in blinking implementation");
         blink_task_handle = NULL;
         xSemaphoreGive(blinking_mutex);
         ESP_LOGI(TAG, "Semaphore given in blinking implementation");
@@ -250,11 +246,14 @@ static esp_err_t get_requests_quantity_handler(httpd_req_t *req)
 {
     http_info_request_happen();
     httpd_resp_set_type(req, "application/json");
-    char *resp_str = get_requests_information_char();
+
+    char *resp_str = get_requests_information_http();
+
     // httpd_resp_send(req, resp_str, HTTPD_RESP_USE_STRLEN);
     gzip_minify_handler(req, resp_str);
     return ESP_OK;
 }
+
 static esp_err_t http_404_error_handler(httpd_req_t *req, httpd_err_code_t err)
 {
     httpd_resp_set_status(req, HTTPD_404);
@@ -298,8 +297,8 @@ esp_err_t init_global_zlib(void)
     g_zlib.strm.zalloc = Z_NULL;
     g_zlib.strm.zfree = Z_NULL;
     g_zlib.strm.opaque = Z_NULL;
-    // windowBits = 13 + 16 (Gzip output wrapper) = 29 memLevel = 6
-    int ret = deflateInit2(&g_zlib.strm, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 29, 6, Z_DEFAULT_STRATEGY);
+    // windowBits = 12 + 16 (Gzip output wrapper)  memLevel = 4
+    int ret = deflateInit2(&g_zlib.strm, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 12 + 16, 4, Z_DEFAULT_STRATEGY);
     if (ret == Z_OK)
     {
         ESP_LOGI(TAG, "Global Zlib initialized successfully. 64KB allocated permanently.");
