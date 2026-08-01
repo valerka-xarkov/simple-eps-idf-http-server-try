@@ -11,11 +11,11 @@
 #include "request_counter.h"
 #include "esp_timer.h"
 
-#define CHUNK_SIZE 4096
 #define OUTPUT_LED 22
-#define MAX_POST_SIZE 220
+#define MAX_BLINK_POST_SIZE 220
 #define LED_ON 0
 #define LED_OFF 1
+#define BUFFER_SIZE 1024
 
 httpd_handle_t server = NULL;
 SemaphoreHandle_t blinking_mutex;
@@ -29,17 +29,28 @@ struct blink_task_params
     int intervalMs;
 };
 
-// Define a structure to hold your persistent buffers and stream context
+typedef size_t (*data_provider_cb)(char *buf, size_t max_len, void *user_context);
+static z_stream g_strm;
+
 typedef struct
 {
-    z_stream strm;
-    uint8_t *in_buf;
-    uint8_t *out_buf;
-    bool is_initialized;
-} global_zlib_ctx_t;
+    const char *ptr;
+    size_t remaining;
+} string_source_t;
 
-// Instantiate the global workspace variable
-static global_zlib_ctx_t g_zlib = {.is_initialized = false};
+size_t string_provider(char *buf, size_t max_len, void *ctx)
+{
+    string_source_t *source = (string_source_t *)ctx;
+    if (source->remaining == 0)
+        return 0;
+
+    size_t to_write = (source->remaining > max_len) ? max_len : source->remaining;
+    memcpy(buf, source->ptr, to_write);
+
+    source->ptr += to_write;
+    source->remaining -= to_write;
+    return to_write;
+}
 
 static esp_err_t hello_get_handler(httpd_req_t *req)
 {
@@ -106,9 +117,9 @@ static esp_err_t led_blink_handler(httpd_req_t *req)
 
     httpd_resp_set_type(req, "application/json");
     const int total_len = req->content_len;
-    if (total_len > MAX_POST_SIZE)
+    if (total_len > MAX_BLINK_POST_SIZE)
     {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "{\"error\": \"Content too long\"}");
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "{\"error\": \"You are hacker! Don't break this piece of rubbish with 520kb RAM only. Content too long.\"}");
         return ESP_FAIL;
     }
 
@@ -181,65 +192,93 @@ static esp_err_t led_blink_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
-esp_err_t gzip_minify_handler(httpd_req_t *req, char *generated_content)
+esp_err_t send_compressed_stream_cached(httpd_req_t *req, data_provider_cb provide_data, void *user_context)
 {
+    int ret = deflateReset(&g_strm);
+    if (ret != Z_OK)
+    {
+        ESP_LOGE(TAG, "Deflate engine reset failed");
+        httpd_resp_send_500(req);
+        return ESP_FAIL;
+    }
+
     httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
 
-    z_stream *p_strm = &g_zlib.strm;
-    uint8_t *in_buf = g_zlib.in_buf;
-    uint8_t *out_buf = g_zlib.out_buf;
+    uint8_t out_buf[BUFFER_SIZE];
+    char in_buf[BUFFER_SIZE];
+    esp_err_t err = ESP_OK;
 
-    size_t content_bytes_left = strlen(generated_content);
-    const char *content_ptr = generated_content;
-    bool flush_flag = false;
-
-    do
+    while (true)
     {
-        size_t bytes_to_read = (content_bytes_left > CHUNK_SIZE) ? CHUNK_SIZE : content_bytes_left;
-        memcpy(in_buf, content_ptr, bytes_to_read);
+        size_t read_bytes = provide_data(in_buf, sizeof(in_buf), user_context);
+        if (read_bytes == 0)
+            break; // Source function empty
 
-        content_ptr += bytes_to_read;
-        content_bytes_left -= bytes_to_read;
+        g_strm.next_in = (uint8_t *)in_buf;
+        g_strm.avail_in = read_bytes;
 
-        p_strm->next_in = in_buf;
-        p_strm->avail_in = bytes_to_read;
-
-        if (content_bytes_left == 0)
+        while (g_strm.avail_in > 0)
         {
-            flush_flag = true;
-        }
-        do
-        {
-            p_strm->next_out = out_buf;
-            p_strm->avail_out = CHUNK_SIZE;
+            g_strm.next_out = out_buf;
+            g_strm.avail_out = BUFFER_SIZE;
 
-            // Execute compression using persistent buffers
-            int ret = deflate(p_strm, flush_flag ? Z_FINISH : Z_NO_FLUSH);
-            if (ret == Z_STREAM_ERROR)
-            {
-                ESP_LOGE(TAG, "Zlib engine execution error");
-                deflateReset(p_strm); // Clean up context state even on failure
-                return ESP_FAIL;
-            }
+            deflate(&g_strm, Z_NO_FLUSH);
 
-            size_t compressed_bytes = CHUNK_SIZE - p_strm->avail_out;
-            if (compressed_bytes > 0)
+            size_t compressed_len = BUFFER_SIZE - g_strm.avail_out;
+            if (compressed_len > 0)
             {
-                esp_err_t err = httpd_resp_send_chunk(req, (const char *)out_buf, compressed_bytes);
+                err = httpd_resp_send_chunk(req, (char *)out_buf, compressed_len);
                 if (err != ESP_OK)
-                {
-                    deflateReset(p_strm); // Clean up if browser abruptly closes the socket
-                    return ESP_FAIL;
-                }
+                    return err;
             }
-        } while (p_strm->avail_out == 0);
+        }
+    }
 
-    } while (!flush_flag);
+    // Finalize GZIP stream tail blocks
+    bool finished = false;
+    while (!finished)
+    {
+        g_strm.next_out = out_buf;
+        g_strm.avail_out = BUFFER_SIZE;
 
-    deflateReset(p_strm);
+        ret = deflate(&g_strm, Z_FINISH);
+        if (ret == Z_STREAM_END)
+        {
+            finished = true;
+        }
 
+        size_t compressed_len = BUFFER_SIZE - g_strm.avail_out;
+        if (compressed_len > 0)
+        {
+            err = httpd_resp_send_chunk(req, (char *)out_buf, compressed_len);
+            if (err != ESP_OK)
+                return err;
+        }
+    }
+
+    // Signal end of chunked session to client
     httpd_resp_send_chunk(req, NULL, 0);
     return ESP_OK;
+}
+
+size_t file_provider(char *buf, size_t max_len, void *ctx)
+{
+    FILE *f = (FILE *)ctx;
+    return fread(buf, 1, max_len, f); // Returns 0 automatically on EOF
+}
+
+esp_err_t file_stream_handler(httpd_req_t *req)
+{
+    FILE *f = fopen("/spiffs/data.json", "r");
+    if (!f)
+    {
+        httpd_resp_send_404(req);
+        return ESP_FAIL;
+    }
+
+    esp_err_t result = send_compressed_stream(req, file_provider, f);
+    fclose(f);
+    return result;
 }
 
 static esp_err_t get_requests_quantity_handler(httpd_req_t *req)
@@ -247,11 +286,12 @@ static esp_err_t get_requests_quantity_handler(httpd_req_t *req)
     http_info_request_happen();
     httpd_resp_set_type(req, "application/json");
 
-    char *resp_str = get_requests_information_http();
+    const char *resp_str = get_requests_information_http();
+    string_source_t state = {.ptr = resp_str, .remaining = strlen(resp_str)};
 
+    return send_compressed_stream_cached(req, string_provider, &state);
     // httpd_resp_send(req, resp_str, HTTPD_RESP_USE_STRLEN);
-    gzip_minify_handler(req, resp_str);
-    return ESP_OK;
+    // return ESP_OK;
 }
 
 static esp_err_t http_404_error_handler(httpd_req_t *req, httpd_err_code_t err)
@@ -261,48 +301,14 @@ static esp_err_t http_404_error_handler(httpd_req_t *req, httpd_err_code_t err)
     return ESP_OK;
 }
 
-static const httpd_uri_t hello_world_uri = {
-    .uri = "/",
-    .method = HTTP_GET,
-    .handler = hello_get_handler,
-    .user_ctx = NULL,
-};
-
-static const httpd_uri_t led_toggle = {
-    .uri = "/led/toggle",
-    .method = HTTP_GET,
-    .handler = led_toggle_handler,
-    .user_ctx = NULL,
-};
-
-static const httpd_uri_t led_blink = {
-    .uri = "/led/blink",
-    .method = HTTP_POST,
-    .handler = led_blink_handler,
-    .user_ctx = NULL,
-};
-
-static const httpd_uri_t get_requests_quantity = {
-    .uri = "/requests-quantity",
-    .method = HTTP_GET,
-    .handler = get_requests_quantity_handler,
-    .user_ctx = NULL,
-};
-
 esp_err_t init_global_zlib(void)
 {
-    g_zlib.in_buf = malloc(CHUNK_SIZE);
-    g_zlib.out_buf = malloc(CHUNK_SIZE);
-
-    g_zlib.strm.zalloc = Z_NULL;
-    g_zlib.strm.zfree = Z_NULL;
-    g_zlib.strm.opaque = Z_NULL;
-    // windowBits = 12 + 16 (Gzip output wrapper)  memLevel = 4
-    int ret = deflateInit2(&g_zlib.strm, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 12 + 16, 4, Z_DEFAULT_STRATEGY);
-    if (ret == Z_OK)
-    {
-        ESP_LOGI(TAG, "Global Zlib initialized successfully. 64KB allocated permanently.");
-    }
+    g_strm.zalloc = Z_NULL;
+    g_strm.zfree = Z_NULL;
+    g_strm.opaque = Z_NULL;
+    // 12 + 16 windowBits configures it for memory-friendly GZIP framing
+    deflateInit2(&g_strm, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 12 + 16, 4, Z_DEFAULT_STRATEGY);
+    ESP_LOGI(TAG, "Cached single-threaded zlib engine initialized");
     return ESP_OK;
 }
 
@@ -324,6 +330,34 @@ esp_err_t open_fn(httpd_handle_t hd, int sockfd)
 
 void register_http_handlers()
 {
+
+    const httpd_uri_t hello_world_uri = {
+        .uri = "/",
+        .method = HTTP_GET,
+        .handler = hello_get_handler,
+        .user_ctx = NULL,
+    };
+
+    const httpd_uri_t led_toggle = {
+        .uri = "/led/toggle",
+        .method = HTTP_GET,
+        .handler = led_toggle_handler,
+        .user_ctx = NULL,
+    };
+
+    const httpd_uri_t led_blink = {
+        .uri = "/led/blink",
+        .method = HTTP_POST,
+        .handler = led_blink_handler,
+        .user_ctx = NULL,
+    };
+
+    const httpd_uri_t get_requests_quantity = {
+        .uri = "/requests-quantity",
+        .method = HTTP_GET,
+        .handler = get_requests_quantity_handler,
+        .user_ctx = NULL,
+    };
     httpd_register_uri_handler(server, &hello_world_uri);
     httpd_register_uri_handler(server, &led_toggle);
     httpd_register_uri_handler(server, &led_blink);
@@ -343,6 +377,7 @@ void start_webserver()
     config.max_open_sockets = 7;
     config.open_fn = open_fn; // THIS LINE IS SPEEDING UP esp_http_server RESPONSE FROM 65ms TO 10ms
     config.core_id = 1;       // Improves performance on "Hello world" page from 320/s to 350/s
+
     if (httpd_start(&server, &config) == ESP_OK)
     {
         register_http_handlers();
