@@ -8,37 +8,26 @@
 #include "freertos/semphr.h"
 #include "cJSON.h"
 #include "lwip/sockets.h"
-#include "request_counter.h"
+#include "services/request_counter.h"
 #include "esp_timer.h"
+#include "services/zlib_compressor.h"
+#include "api/requests_quantity.h"
 
 #define OUTPUT_LED 22
 #define LED_ON 0
 #define LED_OFF 1
-#define BUFFER_SIZE 1024
 
 httpd_handle_t server = NULL;
 SemaphoreHandle_t blinking_mutex;
 static const char *TAG = "http-server";
 int led_status = LED_OFF;
 TaskHandle_t blink_task_handle = NULL;
-static z_stream g_strm;
-uint8_t out_buf[BUFFER_SIZE];
-char in_buf[BUFFER_SIZE];
 
 struct blink_task_params
 {
     int times;
     int intervalMs;
 };
-
-typedef size_t (*data_provider_cb)(char *buf, size_t max_len, void *user_context);
-typedef size_t (*compress_data_cb)(uint8_t *buf, size_t buf_len, void *context);
-
-typedef struct
-{
-    const char *ptr;
-    size_t remaining;
-} string_source_t;
 
 const char *get_mime_type(const char *filename)
 {
@@ -69,26 +58,12 @@ const char *get_mime_type(const char *filename)
     return "application/octet-stream"; // Default fallback
 }
 
-size_t string_provider(char *buf, size_t max_len, void *ctx)
-{
-    string_source_t *source = (string_source_t *)ctx;
-    if (source->remaining == 0)
-        return 0;
-
-    size_t to_write = (source->remaining > max_len) ? max_len : source->remaining;
-    memcpy(buf, source->ptr, to_write);
-
-    source->ptr += to_write;
-    source->remaining -= to_write;
-    return to_write;
-}
-
-static esp_err_t hello_get_handler(httpd_req_t *req)
-{
-    const char *resp_str = "<h1>Hello World</h1>";
-    httpd_resp_send(req, resp_str, HTTPD_RESP_USE_STRLEN);
-    return ESP_OK;
-}
+// static esp_err_t hello_get_handler(httpd_req_t *req)
+// {
+//     const char *resp_str = "<h1>Hello World</h1>";
+//     httpd_resp_send(req, resp_str, HTTPD_RESP_USE_STRLEN);
+//     return ESP_OK;
+// }
 
 static esp_err_t led_toggle_handler(httpd_req_t *req)
 {
@@ -222,71 +197,6 @@ static esp_err_t led_blink_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
-static esp_err_t send_compressed_stream_cached(data_provider_cb provide_data, void *dp_context, compress_data_cb compress_cb, void *cc_context)
-{
-    int ret = deflateReset(&g_strm);
-    if (ret != Z_OK)
-    {
-        ESP_LOGE(TAG, "Deflate engine reset failed");
-        return ESP_FAIL;
-    }
-
-    esp_err_t err = ESP_OK;
-
-    while (true)
-    {
-        size_t read_bytes = provide_data((char *)in_buf, BUFFER_SIZE, dp_context);
-
-        if (read_bytes == 0)
-            break; // Source function empty
-
-        g_strm.next_in = (uint8_t *)in_buf;
-        g_strm.avail_in = read_bytes;
-
-        while (g_strm.avail_in > 0)
-        {
-            g_strm.next_out = out_buf;
-            g_strm.avail_out = BUFFER_SIZE;
-
-            deflate(&g_strm, Z_NO_FLUSH);
-
-            size_t compressed_len = BUFFER_SIZE - g_strm.avail_out;
-            if (compressed_len > 0)
-            {
-                err = compress_cb((uint8_t *)out_buf, compressed_len, cc_context);
-                if (err != ESP_OK)
-                    return err;
-            }
-        }
-    }
-
-    // Finalize GZIP stream tail blocks
-    bool finished = false;
-    while (!finished)
-    {
-        g_strm.next_out = out_buf;
-        g_strm.avail_out = BUFFER_SIZE;
-
-        ret = deflate(&g_strm, Z_FINISH);
-        if (ret == Z_STREAM_END)
-        {
-            finished = true;
-        }
-
-        size_t compressed_len = BUFFER_SIZE - g_strm.avail_out;
-        if (compressed_len > 0)
-        {
-            err = compress_cb((uint8_t *)out_buf, compressed_len, cc_context);
-
-            if (err != ESP_OK)
-                return err;
-        }
-    }
-
-    // Signal end of chunked session to client
-    return ESP_OK;
-}
-
 static size_t file_provider(char *buf, size_t max_len, void *ctx)
 {
     FILE *f = (FILE *)ctx;
@@ -319,35 +229,10 @@ static esp_err_t file_stream_handler(httpd_req_t *req)
     return result;
 }
 
-static esp_err_t get_requests_quantity_handler(httpd_req_t *req)
-{
-    http_info_request_happen();
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
-
-    const char *resp_str = get_requests_information_http();
-    string_source_t state = {.ptr = resp_str, .remaining = strlen(resp_str)};
-    esp_err_t result = send_compressed_stream_cached(string_provider, &state, simple_compress_cb, req);
-
-    httpd_resp_send_chunk(req, NULL, 0);
-    return result;
-}
-
 static esp_err_t http_404_error_handler(httpd_req_t *req, httpd_err_code_t err)
 {
     httpd_resp_set_status(req, HTTPD_404);
     httpd_resp_send(req, "404 error happen, please check URL", HTTPD_RESP_USE_STRLEN);
-    return ESP_OK;
-}
-
-esp_err_t init_global_zlib(void)
-{
-    g_strm.zalloc = Z_NULL;
-    g_strm.zfree = Z_NULL;
-    g_strm.opaque = Z_NULL;
-    // 12 + 16 windowBits configures it for memory-friendly GZIP framing
-    deflateInit2(&g_strm, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 12 + 16, 4, Z_DEFAULT_STRATEGY);
-    ESP_LOGI(TAG, "Cached single-threaded zlib engine initialized");
     return ESP_OK;
 }
 

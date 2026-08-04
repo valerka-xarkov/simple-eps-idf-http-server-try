@@ -1,5 +1,5 @@
-idf_component_register(SRCS  "main.c" "time_set_up.c" "request_counter.c" "wifi_config.c" "http_server_handling.c" 
-"cpu_temperature.c" "fs_operations.c"
+idf_component_register(SRCS  "main.c" "time_set_up.c" "services/request_counter.c" "wifi_config.c" "http_server_handling.c" 
+"cpu_temperature.c" "fs_operations.c" "services/zlib_compressor.c" "api/requests_quantity.c"
                     INCLUDE_DIRS ".") 
 
 # Requires the esp_littlefs component added to your project

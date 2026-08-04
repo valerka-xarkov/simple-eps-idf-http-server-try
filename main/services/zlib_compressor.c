@@ -1,0 +1,123 @@
+#include "zlib.h"
+#include "esp_err.h"
+#include "esp_log.h"
+#include "zlib_compressor.h"
+
+#define BUFFER_SIZE 1024
+static z_stream g_strm;
+static uint8_t out_buf[BUFFER_SIZE];
+static char in_buf[BUFFER_SIZE];
+static const char *TAG = "zlib-compressor";
+
+esp_err_t init_global_zlib(void)
+{
+    g_strm.zalloc = Z_NULL;
+    g_strm.zfree = Z_NULL;
+    g_strm.opaque = Z_NULL;
+    // 12 + 16 windowBits configures it for memory-friendly GZIP framing
+    deflateInit2(&g_strm, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 12 + 16, 4, Z_DEFAULT_STRATEGY);
+    ESP_LOGI(TAG, "Cached single-threaded zlib engine initialized");
+    return ESP_OK;
+}
+
+esp_err_t send_compressed_stream_cached(data_provider_cb provide_data, void *dp_context, compress_data_cb compress_cb, void *cc_context)
+{
+    int ret = deflateReset(&g_strm);
+    if (ret != Z_OK)
+    {
+        ESP_LOGE(TAG, "Deflate engine reset failed");
+        return ESP_FAIL;
+    }
+
+    esp_err_t err = ESP_OK;
+
+    while (true)
+    {
+        size_t read_bytes = provide_data((char *)in_buf, BUFFER_SIZE, dp_context);
+
+        if (read_bytes == 0)
+            break; // Source function empty
+
+        g_strm.next_in = (uint8_t *)in_buf;
+        g_strm.avail_in = read_bytes;
+
+        while (g_strm.avail_in > 0)
+        {
+            g_strm.next_out = out_buf;
+            g_strm.avail_out = BUFFER_SIZE;
+
+            deflate(&g_strm, Z_NO_FLUSH);
+
+            size_t compressed_len = BUFFER_SIZE - g_strm.avail_out;
+            if (compressed_len > 0)
+            {
+                err = compress_cb((uint8_t *)out_buf, compressed_len, cc_context);
+                if (err != ESP_OK)
+                    return err;
+            }
+        }
+    }
+
+    // Finalize GZIP stream tail blocks
+    bool finished = false;
+    while (!finished)
+    {
+        g_strm.next_out = out_buf;
+        g_strm.avail_out = BUFFER_SIZE;
+
+        ret = deflate(&g_strm, Z_FINISH);
+        if (ret == Z_STREAM_END)
+        {
+            finished = true;
+        }
+
+        size_t compressed_len = BUFFER_SIZE - g_strm.avail_out;
+        if (compressed_len > 0)
+        {
+            err = compress_cb((uint8_t *)out_buf, compressed_len, cc_context);
+
+            if (err != ESP_OK)
+                return err;
+        }
+    }
+
+    // Signal end of chunked session to client
+    return ESP_OK;
+}
+
+esp_err_t compress_string_to_buffer(const char *src, uint8_t *dest, size_t dest_max, size_t *out_len)
+{
+    int ret = deflateReset(&g_strm);
+    if (ret != Z_OK)
+    {
+        ESP_LOGE(TAG, "Deflate reset failed");
+        return ESP_FAIL;
+    }
+
+    // Assign input parameters
+    g_strm.next_in = (uint8_t *)src;
+    g_strm.avail_in = strlen(src);
+
+    // Assign output destination parameters
+    g_strm.next_out = dest;
+    g_strm.avail_out = dest_max;
+
+    // Run the compression pipeline in a single step (Z_FINISH forces total compression)
+    ret = deflate(&g_strm, Z_FINISH);
+
+    // Z_STREAM_END indicates that all input was successfully converted and closed out
+    if (ret != Z_STREAM_END)
+    {
+        if (ret == Z_OK)
+        {
+            ESP_LOGE(TAG, "Destination buffer too small to fit compressed data");
+            return ESP_ERR_NO_MEM;
+        }
+        ESP_LOGE(TAG, "Compression failed with error code: %d", ret);
+        return ESP_FAIL;
+    }
+
+    // Calculate how many bytes were actually written to the output array
+    *out_len = dest_max - g_strm.avail_out;
+    return ESP_OK;
+}
