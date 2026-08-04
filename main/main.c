@@ -4,6 +4,8 @@
 #include "time_set_up.h"
 #include "wifi_config.h"
 #include "http_server_handling.h"
+#include "cpu_temperature.h"
+#include "fs_operations.h"
 
 static const char *TAG = "main";
 
@@ -14,6 +16,10 @@ void app_main(void)
     wifi_init_sta();
 
     set_up_time();
+
+    mount_littlefs();
+
+    install_cpu_temperature();
 
     start_webserver();
 

@@ -12,7 +12,6 @@
 #include "esp_timer.h"
 
 #define OUTPUT_LED 22
-#define MAX_BLINK_POST_SIZE 220
 #define LED_ON 0
 #define LED_OFF 1
 #define BUFFER_SIZE 1024
@@ -22,6 +21,9 @@ SemaphoreHandle_t blinking_mutex;
 static const char *TAG = "http-server";
 int led_status = LED_OFF;
 TaskHandle_t blink_task_handle = NULL;
+static z_stream g_strm;
+uint8_t out_buf[BUFFER_SIZE];
+char in_buf[BUFFER_SIZE];
 
 struct blink_task_params
 {
@@ -30,13 +32,42 @@ struct blink_task_params
 };
 
 typedef size_t (*data_provider_cb)(char *buf, size_t max_len, void *user_context);
-static z_stream g_strm;
+typedef size_t (*compress_data_cb)(uint8_t *buf, size_t buf_len, void *context);
 
 typedef struct
 {
     const char *ptr;
     size_t remaining;
 } string_source_t;
+
+const char *get_mime_type(const char *filename)
+{
+    if (filename == NULL)
+        return "application/octet-stream";
+
+    const char *ext = strrchr(filename, '.');
+    if (!ext)
+        return "text/plain"; // No extension found
+
+    if (strcasecmp(ext, ".html") == 0 || strcasecmp(ext, ".htm") == 0)
+        return "text/html";
+    if (strcasecmp(ext, ".css") == 0)
+        return "text/css";
+    if (strcasecmp(ext, ".js") == 0)
+        return "application/javascript";
+    if (strcasecmp(ext, ".json") == 0)
+        return "application/json";
+    if (strcasecmp(ext, ".png") == 0)
+        return "image/png";
+    if (strcasecmp(ext, ".jpg") == 0 || strcasecmp(ext, ".jpeg") == 0)
+        return "image/jpeg";
+    if (strcasecmp(ext, ".ico") == 0)
+        return "image/x-icon";
+    if (strcasecmp(ext, ".svg") == 0)
+        return "image/svg+xml";
+
+    return "application/octet-stream"; // Default fallback
+}
 
 size_t string_provider(char *buf, size_t max_len, void *ctx)
 {
@@ -100,10 +131,8 @@ static void blink_led_task_implementation(void *pvParameters)
 
     if (xSemaphoreTake(blinking_mutex, pdMS_TO_TICKS(50)))
     {
-
         blink_task_handle = NULL;
         xSemaphoreGive(blinking_mutex);
-        ESP_LOGI(TAG, "Semaphore given in blinking implementation");
     }
     else
     {
@@ -117,7 +146,8 @@ static esp_err_t led_blink_handler(httpd_req_t *req)
 
     httpd_resp_set_type(req, "application/json");
     const int total_len = req->content_len;
-    if (total_len > MAX_BLINK_POST_SIZE)
+    const int max_blink_data_size = 35;
+    if (total_len > max_blink_data_size)
     {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "{\"error\": \"You are hacker! Don't break this piece of rubbish with 520kb RAM only. Content too long.\"}");
         return ESP_FAIL;
@@ -173,7 +203,7 @@ static esp_err_t led_blink_handler(httpd_req_t *req)
         task_parameters->intervalMs = intervalMs;
         task_parameters->times = times;
         const int priority = uxTaskPriorityGet(NULL);
-        int xReturned = xTaskCreatePinnedToCore(blink_led_task_implementation, "blink_led_task", 8192, (void *)task_parameters, priority, &blink_task_handle, 0);
+        int xReturned = xTaskCreatePinnedToCore(blink_led_task_implementation, "blink_led_task", 4096, (void *)task_parameters, priority, &blink_task_handle, 0);
         if (xReturned == pdFAIL)
         {
             ESP_LOGI(TAG, "xTaskCreate Failed");
@@ -192,25 +222,21 @@ static esp_err_t led_blink_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
-esp_err_t send_compressed_stream_cached(httpd_req_t *req, data_provider_cb provide_data, void *user_context)
+static esp_err_t send_compressed_stream_cached(data_provider_cb provide_data, void *dp_context, compress_data_cb compress_cb, void *cc_context)
 {
     int ret = deflateReset(&g_strm);
     if (ret != Z_OK)
     {
         ESP_LOGE(TAG, "Deflate engine reset failed");
-        httpd_resp_send_500(req);
         return ESP_FAIL;
     }
 
-    httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
-
-    uint8_t out_buf[BUFFER_SIZE];
-    char in_buf[BUFFER_SIZE];
     esp_err_t err = ESP_OK;
 
     while (true)
     {
-        size_t read_bytes = provide_data(in_buf, sizeof(in_buf), user_context);
+        size_t read_bytes = provide_data((char *)in_buf, BUFFER_SIZE, dp_context);
+
         if (read_bytes == 0)
             break; // Source function empty
 
@@ -227,7 +253,7 @@ esp_err_t send_compressed_stream_cached(httpd_req_t *req, data_provider_cb provi
             size_t compressed_len = BUFFER_SIZE - g_strm.avail_out;
             if (compressed_len > 0)
             {
-                err = httpd_resp_send_chunk(req, (char *)out_buf, compressed_len);
+                err = compress_cb((uint8_t *)out_buf, compressed_len, cc_context);
                 if (err != ESP_OK)
                     return err;
             }
@@ -250,33 +276,45 @@ esp_err_t send_compressed_stream_cached(httpd_req_t *req, data_provider_cb provi
         size_t compressed_len = BUFFER_SIZE - g_strm.avail_out;
         if (compressed_len > 0)
         {
-            err = httpd_resp_send_chunk(req, (char *)out_buf, compressed_len);
+            err = compress_cb((uint8_t *)out_buf, compressed_len, cc_context);
+
             if (err != ESP_OK)
                 return err;
         }
     }
 
     // Signal end of chunked session to client
-    httpd_resp_send_chunk(req, NULL, 0);
     return ESP_OK;
 }
 
-size_t file_provider(char *buf, size_t max_len, void *ctx)
+static size_t file_provider(char *buf, size_t max_len, void *ctx)
 {
     FILE *f = (FILE *)ctx;
     return fread(buf, 1, max_len, f); // Returns 0 automatically on EOF
 }
 
-esp_err_t file_stream_handler(httpd_req_t *req)
+static size_t simple_compress_cb(uint8_t *buf, size_t buf_len, void *context)
 {
-    FILE *f = fopen("/spiffs/data.json", "r");
+    httpd_req_t *req = (httpd_req_t *)context;
+    return httpd_resp_send_chunk(req, (char *)buf, buf_len);
+}
+
+static esp_err_t file_stream_handler(httpd_req_t *req)
+{
+    char *file_path = "/littlefs/static/index.html";
+
+    const char *mime_type = get_mime_type(file_path);
+    httpd_resp_set_type(req, mime_type);
+    httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+    FILE *f = fopen(file_path, "r");
     if (!f)
     {
         httpd_resp_send_404(req);
         return ESP_FAIL;
     }
 
-    esp_err_t result = send_compressed_stream(req, file_provider, f);
+    esp_err_t result = send_compressed_stream_cached(file_provider, f, simple_compress_cb, req);
+    httpd_resp_send_chunk(req, NULL, 0);
     fclose(f);
     return result;
 }
@@ -285,13 +323,14 @@ static esp_err_t get_requests_quantity_handler(httpd_req_t *req)
 {
     http_info_request_happen();
     httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
 
     const char *resp_str = get_requests_information_http();
     string_source_t state = {.ptr = resp_str, .remaining = strlen(resp_str)};
+    esp_err_t result = send_compressed_stream_cached(string_provider, &state, simple_compress_cb, req);
 
-    return send_compressed_stream_cached(req, string_provider, &state);
-    // httpd_resp_send(req, resp_str, HTTPD_RESP_USE_STRLEN);
-    // return ESP_OK;
+    httpd_resp_send_chunk(req, NULL, 0);
+    return result;
 }
 
 static esp_err_t http_404_error_handler(httpd_req_t *req, httpd_err_code_t err)
@@ -331,10 +370,10 @@ esp_err_t open_fn(httpd_handle_t hd, int sockfd)
 void register_http_handlers()
 {
 
-    const httpd_uri_t hello_world_uri = {
+    const httpd_uri_t index_uri = {
         .uri = "/",
         .method = HTTP_GET,
-        .handler = hello_get_handler,
+        .handler = file_stream_handler,
         .user_ctx = NULL,
     };
 
@@ -358,12 +397,13 @@ void register_http_handlers()
         .handler = get_requests_quantity_handler,
         .user_ctx = NULL,
     };
-    httpd_register_uri_handler(server, &hello_world_uri);
+    httpd_register_uri_handler(server, &index_uri);
     httpd_register_uri_handler(server, &led_toggle);
     httpd_register_uri_handler(server, &led_blink);
     httpd_register_uri_handler(server, &get_requests_quantity);
     httpd_register_err_handler(server, HTTPD_404_NOT_FOUND, http_404_error_handler);
 }
+
 void start_webserver()
 {
     configure_led();

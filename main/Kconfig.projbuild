@@ -28,7 +28,7 @@ menu "IP Address Configuration"
     
     config STATIC_IP_ADDR
         string "Static IP address"
-        default "192.168.1.111"
+        default "192.168.1.200"
 
     config STATIC_NETMASK_ADDR
         string "Static netmask address"
