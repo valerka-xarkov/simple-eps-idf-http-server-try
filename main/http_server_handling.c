@@ -12,6 +12,7 @@
 #include "esp_timer.h"
 #include "services/zlib_compressor.h"
 #include "api/requests_quantity.h"
+#include "helpers/page_cache_generator.h"
 
 #define OUTPUT_LED 22
 #define LED_ON 0
@@ -58,12 +59,12 @@ const char *get_mime_type(const char *filename)
     return "application/octet-stream"; // Default fallback
 }
 
-// static esp_err_t hello_get_handler(httpd_req_t *req)
-// {
-//     const char *resp_str = "<h1>Hello World</h1>";
-//     httpd_resp_send(req, resp_str, HTTPD_RESP_USE_STRLEN);
-//     return ESP_OK;
-// }
+static esp_err_t hello_get_handler(httpd_req_t *req)
+{
+    const char *resp_str = "<h1>Hello World</h1>";
+    httpd_resp_send(req, resp_str, HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
 
 static esp_err_t led_toggle_handler(httpd_req_t *req)
 {
@@ -229,6 +230,44 @@ static esp_err_t file_stream_handler(httpd_req_t *req)
     return result;
 }
 
+static esp_err_t file_stream_handler_cached(httpd_req_t *req)
+{
+    char *file_path = "/littlefs/cache/index.html.gz";
+
+    const char *mime_type = get_mime_type("index.html");
+    httpd_resp_set_type(req, mime_type);
+    httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+    FILE *f = fopen(file_path, "r");
+    if (!f)
+    {
+        httpd_resp_send_404(req);
+        return ESP_FAIL;
+    }
+    const int buf_len = 512;
+    uint8_t *buf = malloc(buf_len);
+    int read_len = 0;
+    do
+    {
+        read_len = fread(buf, 1, buf_len, f);
+        if (read_len > 0)
+        {
+            httpd_resp_send_chunk(req, (char *)buf, read_len);
+        }
+    } while (read_len > 0);
+    esp_err_t result = httpd_resp_send_chunk(req, NULL, 0);
+    fclose(f);
+    free(buf);
+    return result;
+}
+
+static esp_err_t file_stream_handler_cached_in_mem(httpd_req_t *req)
+{
+    const char *mime_type = get_mime_type("index.html");
+    httpd_resp_set_type(req, mime_type);
+    httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+    return httpd_resp_send(req, (char *)buffered_file, buffered_file_size);
+}
+
 static esp_err_t http_404_error_handler(httpd_req_t *req, httpd_err_code_t err)
 {
     httpd_resp_set_status(req, HTTPD_404);
@@ -261,6 +300,18 @@ void register_http_handlers()
         .handler = file_stream_handler,
         .user_ctx = NULL,
     };
+    const httpd_uri_t index_uri_cached = {
+        .uri = "/cached",
+        .method = HTTP_GET,
+        .handler = file_stream_handler_cached,
+        .user_ctx = NULL,
+    };
+    const httpd_uri_t index_uri_cached_in_mem = {
+        .uri = "/cached-in-mem",
+        .method = HTTP_GET,
+        .handler = file_stream_handler_cached_in_mem,
+        .user_ctx = NULL,
+    };
 
     const httpd_uri_t led_toggle = {
         .uri = "/led/toggle",
@@ -283,6 +334,8 @@ void register_http_handlers()
         .user_ctx = NULL,
     };
     httpd_register_uri_handler(server, &index_uri);
+    httpd_register_uri_handler(server, &index_uri_cached);
+    httpd_register_uri_handler(server, &index_uri_cached_in_mem);
     httpd_register_uri_handler(server, &led_toggle);
     httpd_register_uri_handler(server, &led_blink);
     httpd_register_uri_handler(server, &get_requests_quantity);
@@ -294,6 +347,7 @@ void start_webserver()
     configure_led();
     init_global_zlib();
     init_http_info_requests_counter();
+    generate_static_cache();
 
     blinking_mutex = xSemaphoreCreateMutex();
 

@@ -1,11 +1,11 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 
-#include "time_set_up.h"
+#include "helpers/time_set_up.h"
 #include "wifi_config.h"
 #include "http_server_handling.h"
 #include "cpu_temperature.h"
-#include "fs_operations.h"
+#include "helpers/fs_operations.h"
 
 static const char *TAG = "main";
 

@@ -121,3 +121,68 @@ esp_err_t compress_string_to_buffer(const char *src, uint8_t *dest, size_t dest_
     *out_len = dest_max - g_strm.avail_out;
     return ESP_OK;
 }
+
+esp_err_t compress_stream_to_file(FILE *dest_file, data_provider_cb provide_data, void *user_context)
+{
+    int ret = deflateReset(&g_strm);
+    if (ret != Z_OK)
+    {
+        ESP_LOGE(TAG, "Deflate file engine reset failed");
+        return ESP_FAIL;
+    }
+
+    // Core Loop: Pull dynamic text, compress, write out to storage
+    while (true)
+    {
+        size_t read_bytes = provide_data(in_buf, sizeof(in_buf), user_context);
+        if (read_bytes == 0)
+            break; // Source function is complete
+
+        g_strm.next_in = (uint8_t *)in_buf;
+        g_strm.avail_in = read_bytes;
+
+        while (g_strm.avail_in > 0)
+        {
+            g_strm.next_out = out_buf;
+            g_strm.avail_out = BUFFER_SIZE;
+
+            deflate(&g_strm, Z_NO_FLUSH);
+
+            size_t compressed_len = BUFFER_SIZE - g_strm.avail_out;
+            if (compressed_len > 0)
+            {
+                if (fwrite(out_buf, 1, compressed_len, dest_file) != compressed_len)
+                {
+                    ESP_LOGE(TAG, "Disk write error during stream execution");
+                    return ESP_FAIL;
+                }
+            }
+        }
+    }
+
+    // Finalize GZIP framing footer tags and write remainder
+    bool finished = false;
+    while (!finished)
+    {
+        g_strm.next_out = out_buf;
+        g_strm.avail_out = BUFFER_SIZE;
+
+        ret = deflate(&g_strm, Z_FINISH);
+        if (ret == Z_STREAM_END)
+        {
+            finished = true;
+        }
+
+        size_t compressed_len = BUFFER_SIZE - g_strm.avail_out;
+        if (compressed_len > 0)
+        {
+            if (fwrite(out_buf, 1, compressed_len, dest_file) != compressed_len)
+            {
+                ESP_LOGE(TAG, "Disk write error during stream finalization");
+                return ESP_FAIL;
+            }
+        }
+    }
+
+    return ESP_OK;
+}
