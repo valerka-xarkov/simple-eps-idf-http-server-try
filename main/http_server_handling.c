@@ -103,7 +103,7 @@ static void blink_led_task_implementation(void *pvParameters)
         gpio_set_level(OUTPUT_LED, LED_ON);
         vTaskDelay(ticks);
     }
-    ESP_LOGI(TAG, "Blink finished");
+    // ESP_LOGI(TAG, "Blink finished");
 
     if (xSemaphoreTake(blinking_mutex, pdMS_TO_TICKS(50)))
     {
@@ -155,7 +155,7 @@ static esp_err_t led_blink_handler(httpd_req_t *req)
     }
     const int times = timesNode->valueint;
     const int intervalMs = intervalMsNode->valueint;
-    ESP_LOGI(TAG, "Received and parsed values: times = %d, intervalMs = %d", times, intervalMs);
+    // ESP_LOGI(TAG, "Received and parsed values: times = %d, intervalMs = %d", times, intervalMs);
     cJSON_Delete(root);
 
     if (times <= 0 || times > 1000 || intervalMs < 50 || intervalMs > 3000)
@@ -167,12 +167,12 @@ static esp_err_t led_blink_handler(httpd_req_t *req)
     if (xSemaphoreTake(blinking_mutex, pdMS_TO_TICKS(50)))
     {
 
-        ESP_LOGI(TAG, "Semaphore taken in http-handler");
+        // ESP_LOGI(TAG, "Semaphore taken in http-handler");
 
         if (blink_task_handle != NULL)
         {
             vTaskDelete(blink_task_handle);
-            ESP_LOGI(TAG, "Deleted Task %d", blink_task_handle);
+            // ESP_LOGI(TAG, "Deleted Task %d", blink_task_handle);
             blink_task_handle = NULL;
         }
         struct blink_task_params *task_parameters = malloc(sizeof(struct blink_task_params));
@@ -185,14 +185,14 @@ static esp_err_t led_blink_handler(httpd_req_t *req)
             ESP_LOGI(TAG, "xTaskCreate Failed");
         }
         xSemaphoreGive(blinking_mutex);
-        ESP_LOGI(TAG, "Semaphore given in http-handler");
+        // ESP_LOGI(TAG, "Semaphore given in http-handler");
     }
     else
     {
         ESP_LOGI(TAG, "Error happen while runnning while creating blinking task");
     }
 
-    ESP_LOGI(TAG, "blink_task_handle value %d", (int)&blink_task_handle);
+    // ESP_LOGI(TAG, "blink_task_handle value %d", (int)&blink_task_handle);
 
     httpd_resp_sendstr(req, "{\"success\": true}");
     return ESP_OK;
