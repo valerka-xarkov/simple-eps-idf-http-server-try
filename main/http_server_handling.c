@@ -312,6 +312,12 @@ void register_http_handlers()
         .handler = file_stream_handler_cached_in_mem,
         .user_ctx = NULL,
     };
+    const httpd_uri_t index_uri_hello_world = {
+        .uri = "/hello-world",
+        .method = HTTP_GET,
+        .handler = hello_get_handler,
+        .user_ctx = NULL,
+    };
 
     const httpd_uri_t led_toggle = {
         .uri = "/led/toggle",
@@ -336,6 +342,7 @@ void register_http_handlers()
     httpd_register_uri_handler(server, &index_uri);
     httpd_register_uri_handler(server, &index_uri_cached);
     httpd_register_uri_handler(server, &index_uri_cached_in_mem);
+    httpd_register_uri_handler(server, &index_uri_hello_world);
     httpd_register_uri_handler(server, &led_toggle);
     httpd_register_uri_handler(server, &led_blink);
     httpd_register_uri_handler(server, &get_requests_quantity);
@@ -352,7 +359,7 @@ void start_webserver()
     blinking_mutex = xSemaphoreCreateMutex();
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.lru_purge_enable = false;
+    config.lru_purge_enable = false; // should be false. Checked with true, and it is slower
     config.max_open_sockets = 7;
     config.open_fn = open_fn; // THIS LINE IS SPEEDING UP esp_http_server RESPONSE FROM 65ms TO 10ms
     config.core_id = 1;       // Improves performance on "Hello world" page from 320/s to 350/s
