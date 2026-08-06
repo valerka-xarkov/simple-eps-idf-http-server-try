@@ -9,12 +9,12 @@
   ],
   "idf.currentSetup": "C:\\esp\\v6.0.2\\esp-idf",
   "idf.openOcdConfigs": [
-    "board/esp32-wrover-kit-3.3v.cfg"
+    "board/esp32s3-builtin.cfg"
   ],
   "idf.customExtraVars": {
-    "IDF_TARGET": "esp32"
+    "IDF_TARGET": "esp32s3"
   },
-  "idf.portWin": "COM3",
+  "idf.portWin": "COM5",
   "idf.flashType": "UART",
   "editor.formatOnSave": true
 }

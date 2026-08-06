@@ -12,11 +12,12 @@
 #include "esp_timer.h"
 #include "services/zlib_compressor.h"
 #include "api/requests_quantity.h"
+#include "api/sys_info.h"
 #include "helpers/page_cache_generator.h"
 
-#define OUTPUT_LED 22
-#define LED_ON 0
-#define LED_OFF 1
+#define OUTPUT_LED 38
+#define LED_ON 1
+#define LED_OFF 0
 
 httpd_handle_t server = NULL;
 SemaphoreHandle_t blinking_mutex;
@@ -59,10 +60,12 @@ const char *get_mime_type(const char *filename)
     return "application/octet-stream"; // Default fallback
 }
 
+static const char *hello_world_message = "<h1>Hello World</h1>";
+
 static esp_err_t hello_get_handler(httpd_req_t *req)
 {
-    const char *resp_str = "<h1>Hello World</h1>";
-    httpd_resp_send(req, resp_str, HTTPD_RESP_USE_STRLEN);
+    http_info_request_happen();
+    httpd_resp_send(req, hello_world_message, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
 }
 
@@ -82,7 +85,7 @@ static esp_err_t led_toggle_handler(httpd_req_t *req)
     gpio_set_level(OUTPUT_LED, led_status);
     char resp_str[20];
     sprintf(resp_str, "{\"led\": \"%s\"}", isLedOn ? "off" : "on");
-    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_type(req, HTTPD_TYPE_JSON);
     httpd_resp_send(req, resp_str, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
 }
@@ -120,7 +123,7 @@ static void blink_led_task_implementation(void *pvParameters)
 static esp_err_t led_blink_handler(httpd_req_t *req)
 {
 
-    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_type(req, HTTPD_TYPE_JSON);
     const int total_len = req->content_len;
     const int max_blink_data_size = 35;
     if (total_len > max_blink_data_size)
@@ -212,6 +215,7 @@ static size_t simple_compress_cb(uint8_t *buf, size_t buf_len, void *context)
 
 static esp_err_t file_stream_handler(httpd_req_t *req)
 {
+    http_info_request_happen();
     char *file_path = "/littlefs/static/index.html";
 
     const char *mime_type = get_mime_type(file_path);
@@ -232,6 +236,7 @@ static esp_err_t file_stream_handler(httpd_req_t *req)
 
 static esp_err_t file_stream_handler_cached(httpd_req_t *req)
 {
+    http_info_request_happen();
     char *file_path = "/littlefs/cache/index.html.gz";
 
     const char *mime_type = get_mime_type("index.html");
@@ -262,10 +267,27 @@ static esp_err_t file_stream_handler_cached(httpd_req_t *req)
 
 static esp_err_t file_stream_handler_cached_in_mem(httpd_req_t *req)
 {
+    http_info_request_happen();
     const char *mime_type = get_mime_type("index.html");
     httpd_resp_set_type(req, mime_type);
     httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
     return httpd_resp_send(req, (char *)buffered_file, buffered_file_size);
+}
+static esp_err_t file_stream_handler_cached_in_mem_optimized(httpd_req_t *req)
+{
+    http_info_request_happen();
+    int sockfd = httpd_req_to_sockfd(req);
+    if (sockfd < 0)
+        return ESP_FAIL;
+    char *content_length_header[140];
+    sprintf((char *)content_length_header, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Encoding: gzip\r\nContent-Length: %d\r\n\r\n", buffered_file_size);
+
+    // 1. Send headers directly to the socket
+    httpd_send(req, (char *)content_length_header, strlen((char *)content_length_header));
+
+    // 2. Send the raw 32 KB memory pointer with zero copying
+    httpd_send(req, (const char *)buffered_file, buffered_file_size);
+    return ESP_OK;
 }
 
 static esp_err_t http_404_error_handler(httpd_req_t *req, httpd_err_code_t err)
@@ -312,6 +334,12 @@ void register_http_handlers()
         .handler = file_stream_handler_cached_in_mem,
         .user_ctx = NULL,
     };
+    const httpd_uri_t index_uri_cached_in_mem_optimized = {
+        .uri = "/cached-in-mem-optimized",
+        .method = HTTP_GET,
+        .handler = file_stream_handler_cached_in_mem_optimized,
+        .user_ctx = NULL,
+    };
     const httpd_uri_t index_uri_hello_world = {
         .uri = "/hello-world",
         .method = HTTP_GET,
@@ -339,13 +367,21 @@ void register_http_handlers()
         .handler = get_requests_quantity_handler,
         .user_ctx = NULL,
     };
+    const httpd_uri_t get_int_sys_info = {
+        .uri = "/int-sys-info",
+        .method = HTTP_GET,
+        .handler = get_int_sys_info_handler,
+        .user_ctx = NULL,
+    };
     httpd_register_uri_handler(server, &index_uri);
     httpd_register_uri_handler(server, &index_uri_cached);
     httpd_register_uri_handler(server, &index_uri_cached_in_mem);
+    httpd_register_uri_handler(server, &index_uri_cached_in_mem_optimized);
     httpd_register_uri_handler(server, &index_uri_hello_world);
     httpd_register_uri_handler(server, &led_toggle);
     httpd_register_uri_handler(server, &led_blink);
     httpd_register_uri_handler(server, &get_requests_quantity);
+    httpd_register_uri_handler(server, &get_int_sys_info);
     httpd_register_err_handler(server, HTTPD_404_NOT_FOUND, http_404_error_handler);
 }
 
@@ -360,6 +396,7 @@ void start_webserver()
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.lru_purge_enable = false; // should be false. Checked with true, and it is slower
+    config.max_uri_handlers = 20;
     config.max_open_sockets = 7;
     config.open_fn = open_fn; // THIS LINE IS SPEEDING UP esp_http_server RESPONSE FROM 65ms TO 10ms
     config.core_id = 1;       // Improves performance on "Hello world" page from 320/s to 350/s

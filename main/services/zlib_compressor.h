@@ -8,3 +8,5 @@ esp_err_t send_compressed_stream_cached(data_provider_cb provide_data, void *dp_
 
 esp_err_t compress_string_to_buffer(const char *src, uint8_t *dest, size_t dest_max, size_t *out_len);
 esp_err_t compress_stream_to_file(FILE *dest_file, data_provider_cb provide_data, void *user_context);
+
+#define COMPRESSOR_BUFFER_SIZE 32768

@@ -66,7 +66,7 @@ static void generate_response(char *resp_buf, struct requests_per_second request
 esp_err_t get_requests_quantity_handler(httpd_req_t *req)
 {
     http_info_request_happen();
-    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_type(req, HTTPD_TYPE_JSON);
     httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
 
     time_t new_time = time(NULL);
@@ -80,7 +80,5 @@ esp_err_t get_requests_quantity_handler(httpd_req_t *req)
         compress_string_to_buffer((char *)result_buf, (uint8_t *)zlib_res_buf, ZLIB_RES_BUF_SIZE, &zlib_res_buf_length);
         current_time = new_time;
     }
-    httpd_resp_send_chunk(req, (char *)zlib_res_buf, zlib_res_buf_length);
-
-    return httpd_resp_send_chunk(req, NULL, 0);
+    return httpd_resp_send(req, (char *)zlib_res_buf, zlib_res_buf_length);
 }

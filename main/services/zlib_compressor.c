@@ -2,20 +2,35 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "zlib_compressor.h"
+#include "esp_heap_caps.h"
 
-#define BUFFER_SIZE 1024
 static z_stream g_strm;
-static uint8_t out_buf[BUFFER_SIZE];
-static char in_buf[BUFFER_SIZE];
+static uint8_t *out_buf = NULL;
+static char *in_buf = NULL;
 static const char *TAG = "zlib-compressor";
+
+// 1. Define custom allocation functions for zlib
+void *zlib_psram_alloc(void *opaque, unsigned int items, unsigned int size)
+{
+    return heap_caps_malloc(items * size, MALLOC_CAP_SPIRAM);
+}
+
+void zlib_psram_free(void *opaque, void *address)
+{
+    free(address);
+}
 
 esp_err_t init_global_zlib(void)
 {
-    g_strm.zalloc = Z_NULL;
-    g_strm.zfree = Z_NULL;
+    g_strm.zalloc = zlib_psram_alloc; // Directs all internal allocations to PSRAM
+    g_strm.zfree = zlib_psram_free;
     g_strm.opaque = Z_NULL;
-    // 12 + 16 windowBits configures it for memory-friendly GZIP framing
-    deflateInit2(&g_strm, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 12 + 16, 4, Z_DEFAULT_STRATEGY);
+    out_buf = (uint8_t *)heap_caps_malloc(COMPRESSOR_BUFFER_SIZE, MALLOC_CAP_SPIRAM);
+    in_buf = (char *)heap_caps_malloc(COMPRESSOR_BUFFER_SIZE, MALLOC_CAP_SPIRAM);
+    // 12 + 16 windowBits configures it for memory-friendly GZIP framing, 4 for 40kb mem usage
+    int windowsBits = 15;
+    int GZIP_ENCODING = 16;
+    deflateInit2(&g_strm, Z_DEFAULT_COMPRESSION, Z_DEFLATED, windowsBits | GZIP_ENCODING, 8, Z_DEFAULT_STRATEGY);
     ESP_LOGI(TAG, "Cached single-threaded zlib engine initialized");
     return ESP_OK;
 }
@@ -33,7 +48,7 @@ esp_err_t send_compressed_stream_cached(data_provider_cb provide_data, void *dp_
 
     while (true)
     {
-        size_t read_bytes = provide_data((char *)in_buf, BUFFER_SIZE, dp_context);
+        size_t read_bytes = provide_data((char *)in_buf, COMPRESSOR_BUFFER_SIZE, dp_context);
 
         if (read_bytes == 0)
             break; // Source function empty
@@ -44,11 +59,11 @@ esp_err_t send_compressed_stream_cached(data_provider_cb provide_data, void *dp_
         while (g_strm.avail_in > 0)
         {
             g_strm.next_out = out_buf;
-            g_strm.avail_out = BUFFER_SIZE;
+            g_strm.avail_out = COMPRESSOR_BUFFER_SIZE;
 
             deflate(&g_strm, Z_NO_FLUSH);
 
-            size_t compressed_len = BUFFER_SIZE - g_strm.avail_out;
+            size_t compressed_len = COMPRESSOR_BUFFER_SIZE - g_strm.avail_out;
             if (compressed_len > 0)
             {
                 err = compress_cb((uint8_t *)out_buf, compressed_len, cc_context);
@@ -63,7 +78,7 @@ esp_err_t send_compressed_stream_cached(data_provider_cb provide_data, void *dp_
     while (!finished)
     {
         g_strm.next_out = out_buf;
-        g_strm.avail_out = BUFFER_SIZE;
+        g_strm.avail_out = COMPRESSOR_BUFFER_SIZE;
 
         ret = deflate(&g_strm, Z_FINISH);
         if (ret == Z_STREAM_END)
@@ -71,7 +86,7 @@ esp_err_t send_compressed_stream_cached(data_provider_cb provide_data, void *dp_
             finished = true;
         }
 
-        size_t compressed_len = BUFFER_SIZE - g_strm.avail_out;
+        size_t compressed_len = COMPRESSOR_BUFFER_SIZE - g_strm.avail_out;
         if (compressed_len > 0)
         {
             err = compress_cb((uint8_t *)out_buf, compressed_len, cc_context);
@@ -144,11 +159,11 @@ esp_err_t compress_stream_to_file(FILE *dest_file, data_provider_cb provide_data
         while (g_strm.avail_in > 0)
         {
             g_strm.next_out = out_buf;
-            g_strm.avail_out = BUFFER_SIZE;
+            g_strm.avail_out = COMPRESSOR_BUFFER_SIZE;
 
             deflate(&g_strm, Z_NO_FLUSH);
 
-            size_t compressed_len = BUFFER_SIZE - g_strm.avail_out;
+            size_t compressed_len = COMPRESSOR_BUFFER_SIZE - g_strm.avail_out;
             if (compressed_len > 0)
             {
                 if (fwrite(out_buf, 1, compressed_len, dest_file) != compressed_len)
@@ -165,7 +180,7 @@ esp_err_t compress_stream_to_file(FILE *dest_file, data_provider_cb provide_data
     while (!finished)
     {
         g_strm.next_out = out_buf;
-        g_strm.avail_out = BUFFER_SIZE;
+        g_strm.avail_out = COMPRESSOR_BUFFER_SIZE;
 
         ret = deflate(&g_strm, Z_FINISH);
         if (ret == Z_STREAM_END)
@@ -173,7 +188,7 @@ esp_err_t compress_stream_to_file(FILE *dest_file, data_provider_cb provide_data
             finished = true;
         }
 
-        size_t compressed_len = BUFFER_SIZE - g_strm.avail_out;
+        size_t compressed_len = COMPRESSOR_BUFFER_SIZE - g_strm.avail_out;
         if (compressed_len > 0)
         {
             if (fwrite(out_buf, 1, compressed_len, dest_file) != compressed_len)
