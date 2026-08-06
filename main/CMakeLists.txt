@@ -1,5 +1,5 @@
 idf_component_register(SRCS  "main.c" "helpers/time_set_up.c" "services/request_counter.c" "wifi_config.c" "http_server_handling.c" 
-"cpu_temperature.c" "helpers/fs_operations.c" "services/zlib_compressor.c" "api/requests_quantity.c" "helpers/page_cache_generator.c"
+"helpers/fs_operations.c" "services/zlib_compressor.c" "api/requests_quantity.c" "helpers/page_cache_generator.c"
 "services/sys_information.c" "api/sys_info.c"
                     INCLUDE_DIRS ".") 
 

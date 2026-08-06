@@ -9,9 +9,11 @@
 #include "esp_flash.h"
 #include "sys_information.h"
 #include "esp_wifi.h"
+#include "driver/temperature_sensor.h"
 
 static const char *TAG = "sys-info-service";
-struct interesting_system_information int_sys_info;
+static struct interesting_system_information int_sys_info;
+static temperature_sensor_handle_t temp_handle = NULL;
 
 static const char *esp_chip_model_to_str(esp_chip_model_t model)
 {
@@ -44,7 +46,7 @@ static const char *esp_chip_model_to_str(esp_chip_model_t model)
     }
 }
 
-void get_interesting_system_info()
+void initialize_int_sys_info()
 {
 
     esp_chip_info_t chip_info;
@@ -81,6 +83,14 @@ void get_interesting_system_info()
 
     int_sys_info.flash_size = flash_size;
     int_sys_info.total_sram = total_sram;
+
+    // 1. Define the anticipated temperature range (e.g., -10°C to 80°C)
+    temperature_sensor_config_t temp_sensor_config = {
+        .range_min = -10,
+        .range_max = 80,
+    };
+
+    temperature_sensor_install(&temp_sensor_config, &temp_handle);
 }
 
 int get_wifi_signal()
@@ -93,4 +103,20 @@ int get_wifi_signal()
         return ap_info.rssi;
     }
     return 0;
+}
+
+struct interesting_system_information get_sys_int_info()
+{
+    int_sys_info.wifi_signal = get_wifi_signal();
+    int_sys_info.free_ram = xPortGetFreeHeapSize();
+    int_sys_info.free_psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+
+    // 4. Retrieve the temperature in Celsius
+    float celsius = 0;
+    temperature_sensor_enable(temp_handle);
+    ESP_ERROR_CHECK(temperature_sensor_get_celsius(temp_handle, &celsius));
+    temperature_sensor_disable(temp_handle);
+    int_sys_info.cpu_temperature = celsius;
+
+    return int_sys_info;
 }
