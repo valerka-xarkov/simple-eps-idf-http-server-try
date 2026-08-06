@@ -41,13 +41,13 @@ const char *get_mime_type(const char *filename)
         return "text/plain"; // No extension found
 
     if (strcasecmp(ext, ".html") == 0 || strcasecmp(ext, ".htm") == 0)
-        return "text/html";
+        return HTTPD_TYPE_TEXT;
     if (strcasecmp(ext, ".css") == 0)
         return "text/css";
     if (strcasecmp(ext, ".js") == 0)
         return "application/javascript";
     if (strcasecmp(ext, ".json") == 0)
-        return "application/json";
+        return HTTPD_TYPE_JSON;
     if (strcasecmp(ext, ".png") == 0)
         return "image/png";
     if (strcasecmp(ext, ".jpg") == 0 || strcasecmp(ext, ".jpeg") == 0)
@@ -57,7 +57,7 @@ const char *get_mime_type(const char *filename)
     if (strcasecmp(ext, ".svg") == 0)
         return "image/svg+xml";
 
-    return "application/octet-stream"; // Default fallback
+    return HTTPD_TYPE_OCTET; // Default fallback
 }
 
 static const char *hello_world_message = "<h1>Hello World</h1>";
@@ -362,13 +362,13 @@ void register_http_handlers()
     };
 
     const httpd_uri_t get_requests_quantity = {
-        .uri = "/requests-quantity",
+        .uri = "/api/requests-quantity",
         .method = HTTP_GET,
         .handler = get_requests_quantity_handler,
         .user_ctx = NULL,
     };
     const httpd_uri_t get_int_sys_info = {
-        .uri = "/int-sys-info",
+        .uri = "/api/int-sys-info",
         .method = HTTP_GET,
         .handler = get_int_sys_info_handler,
         .user_ctx = NULL,
@@ -399,7 +399,7 @@ void start_webserver()
     config.max_uri_handlers = 20;
     config.max_open_sockets = 7;
     config.open_fn = open_fn; // THIS LINE IS SPEEDING UP esp_http_server RESPONSE FROM 65ms TO 10ms
-    config.core_id = 1;       // Improves performance on "Hello world" page from 320/s to 350/s
+    config.core_id = 1;       // Improves performance on "Hello world" page from 220/s to 350/s
 
     if (httpd_start(&server, &config) == ESP_OK)
     {

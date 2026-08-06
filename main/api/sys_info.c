@@ -8,10 +8,19 @@
 #include "esp_heap_caps.h"
 
 // static const char *TAG = "sys-info-api";
+static time_t cur_time = 0;
+static char *result_buf;
 
-static char *generate_response()
+static void generate_response()
 {
+    time_t new_time = time(NULL);
+    if (cur_time >= new_time)
+    {
+        return;
+    }
+    cur_time = new_time;
     struct interesting_system_information int_sys_info = get_sys_int_info();
+
     cJSON *root = cJSON_CreateObject();
     cJSON_AddNumberToObject(root, "cpuFrequency", int_sys_info.cpu_freq);
     cJSON_AddNumberToObject(root, "cores", int_sys_info.cores);
@@ -24,16 +33,15 @@ static char *generate_response()
     cJSON_AddNumberToObject(root, "freePsram", int_sys_info.free_psram);
     cJSON_AddNumberToObject(root, "cpuTemperature", int_sys_info.cpu_temperature);
 
-    char *result_buf = cJSON_PrintUnformatted(root);
+    result_buf = cJSON_PrintUnformatted(root);
     // ESP_LOGE(TAG, "result_buf after %s", result_buf);
     cJSON_Delete(root);
-    return result_buf;
 }
 
-esp_err_t get_int_sys_info_handler(httpd_req_t *req)
+esp_err_t IRAM_ATTR get_int_sys_info_handler(httpd_req_t *req)
 {
     http_info_request_happen();
-    char *result_buf = generate_response();
+    generate_response();
     httpd_resp_set_type(req, HTTPD_TYPE_JSON);
     esp_err_t result = httpd_resp_sendstr(req, (char *)result_buf);
     free(result_buf);

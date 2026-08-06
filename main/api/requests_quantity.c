@@ -63,7 +63,7 @@ static void generate_response(char *resp_buf, struct requests_per_second request
     cJSON_Delete(root);
 }
 
-esp_err_t get_requests_quantity_handler(httpd_req_t *req)
+esp_err_t IRAM_ATTR get_requests_quantity_handler(httpd_req_t *req)
 {
     http_info_request_happen();
     httpd_resp_set_type(req, HTTPD_TYPE_JSON);
