@@ -62,14 +62,14 @@ const char *get_mime_type(const char *filename)
 
 static const char *hello_world_message = "<h1>Hello World</h1>";
 
-static esp_err_t hello_get_handler(httpd_req_t *req)
+static esp_err_t IRAM_ATTR hello_get_handler(httpd_req_t *req)
 {
     http_info_request_happen();
     httpd_resp_send(req, hello_world_message, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
 }
 
-static esp_err_t led_toggle_handler(httpd_req_t *req)
+static esp_err_t IRAM_ATTR led_toggle_handler(httpd_req_t *req)
 {
     if (xSemaphoreTake(blinking_mutex, pdMS_TO_TICKS(50)))
     {
@@ -90,7 +90,7 @@ static esp_err_t led_toggle_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
-static void blink_led_task_implementation(void *pvParameters)
+static void IRAM_ATTR blink_led_task_implementation(void *pvParameters)
 {
     struct blink_task_params *task_parameters = pvParameters;
     const int times = task_parameters->times;
@@ -120,7 +120,7 @@ static void blink_led_task_implementation(void *pvParameters)
     vTaskDelete(NULL);
 }
 
-static esp_err_t led_blink_handler(httpd_req_t *req)
+static esp_err_t IRAM_ATTR led_blink_handler(httpd_req_t *req)
 {
 
     httpd_resp_set_type(req, HTTPD_TYPE_JSON);
@@ -213,7 +213,7 @@ static size_t simple_compress_cb(uint8_t *buf, size_t buf_len, void *context)
     return httpd_resp_send_chunk(req, (char *)buf, buf_len);
 }
 
-static esp_err_t file_stream_handler(httpd_req_t *req)
+static esp_err_t IRAM_ATTR file_stream_handler(httpd_req_t *req)
 {
     http_info_request_happen();
     char *file_path = "/littlefs/static/index.html";
@@ -234,7 +234,7 @@ static esp_err_t file_stream_handler(httpd_req_t *req)
     return result;
 }
 
-static esp_err_t file_stream_handler_cached(httpd_req_t *req)
+static esp_err_t IRAM_ATTR file_stream_handler_cached(httpd_req_t *req)
 {
     http_info_request_happen();
     char *file_path = "/littlefs/cache/index.html.gz";
@@ -265,7 +265,7 @@ static esp_err_t file_stream_handler_cached(httpd_req_t *req)
     return result;
 }
 
-static esp_err_t file_stream_handler_cached_in_mem(httpd_req_t *req)
+static esp_err_t IRAM_ATTR file_stream_handler_cached_in_mem(httpd_req_t *req)
 {
     http_info_request_happen();
     const char *mime_type = get_mime_type("index.html");
@@ -273,7 +273,7 @@ static esp_err_t file_stream_handler_cached_in_mem(httpd_req_t *req)
     httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
     return httpd_resp_send(req, (char *)buffered_file, buffered_file_size);
 }
-static esp_err_t file_stream_handler_cached_in_mem_optimized(httpd_req_t *req)
+static esp_err_t IRAM_ATTR file_stream_handler_cached_in_mem_optimized(httpd_req_t *req)
 {
     http_info_request_happen();
     int sockfd = httpd_req_to_sockfd(req);
@@ -290,7 +290,7 @@ static esp_err_t file_stream_handler_cached_in_mem_optimized(httpd_req_t *req)
     return ESP_OK;
 }
 
-static esp_err_t http_404_error_handler(httpd_req_t *req, httpd_err_code_t err)
+static esp_err_t IRAM_ATTR http_404_error_handler(httpd_req_t *req, httpd_err_code_t err)
 {
     httpd_resp_set_status(req, HTTPD_404);
     httpd_resp_send(req, "404 error happen, please check URL", HTTPD_RESP_USE_STRLEN);
@@ -305,7 +305,7 @@ static void configure_led(void)
     ESP_LOGI(TAG, "LED Configured!\n");
 }
 
-esp_err_t open_fn(httpd_handle_t hd, int sockfd)
+esp_err_t IRAM_ATTR open_fn(httpd_handle_t hd, int sockfd)
 {
     int val = 1;
     // Disable Nagle's algorithm for instant packet delivery
