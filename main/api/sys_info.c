@@ -38,7 +38,7 @@ static void generate_response()
     cJSON_Delete(root);
 }
 
-esp_err_t IRAM_ATTR get_int_sys_info_handler(httpd_req_t *req)
+esp_err_t get_int_sys_info_handler(httpd_req_t *req)
 {
     http_info_request_happen();
     generate_response();

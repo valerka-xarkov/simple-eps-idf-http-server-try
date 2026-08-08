@@ -14,10 +14,12 @@
 #include "api/requests_quantity.h"
 #include "api/sys_info.h"
 #include "helpers/page_cache_generator.h"
+#include "api/led.h"
+#include "helpers/led.h"
 
-#define OUTPUT_LED 38
-#define LED_ON 1
-#define LED_OFF 0
+#define OUTPUT_LED 22
+#define LED_ON 0
+#define LED_OFF 1
 
 httpd_handle_t server = NULL;
 SemaphoreHandle_t blinking_mutex;
@@ -62,14 +64,14 @@ const char *get_mime_type(const char *filename)
 
 static const char *hello_world_message = "<h1>Hello World</h1>";
 
-static esp_err_t IRAM_ATTR hello_get_handler(httpd_req_t *req)
+static esp_err_t hello_get_handler(httpd_req_t *req)
 {
     http_info_request_happen();
     httpd_resp_send(req, hello_world_message, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
 }
 
-static esp_err_t IRAM_ATTR led_toggle_handler(httpd_req_t *req)
+static esp_err_t led_toggle_handler(httpd_req_t *req)
 {
     if (xSemaphoreTake(blinking_mutex, pdMS_TO_TICKS(50)))
     {
@@ -90,7 +92,7 @@ static esp_err_t IRAM_ATTR led_toggle_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
-static void IRAM_ATTR blink_led_task_implementation(void *pvParameters)
+static void blink_led_task_implementation(void *pvParameters)
 {
     struct blink_task_params *task_parameters = pvParameters;
     const int times = task_parameters->times;
@@ -120,7 +122,7 @@ static void IRAM_ATTR blink_led_task_implementation(void *pvParameters)
     vTaskDelete(NULL);
 }
 
-static esp_err_t IRAM_ATTR led_blink_handler(httpd_req_t *req)
+static esp_err_t led_blink_handler(httpd_req_t *req)
 {
 
     httpd_resp_set_type(req, HTTPD_TYPE_JSON);
@@ -213,7 +215,7 @@ static size_t simple_compress_cb(uint8_t *buf, size_t buf_len, void *context)
     return httpd_resp_send_chunk(req, (char *)buf, buf_len);
 }
 
-static esp_err_t IRAM_ATTR file_stream_handler(httpd_req_t *req)
+static esp_err_t file_stream_handler(httpd_req_t *req)
 {
     http_info_request_happen();
     char *file_path = "/littlefs/static/index.html";
@@ -234,7 +236,7 @@ static esp_err_t IRAM_ATTR file_stream_handler(httpd_req_t *req)
     return result;
 }
 
-static esp_err_t IRAM_ATTR file_stream_handler_cached(httpd_req_t *req)
+static esp_err_t file_stream_handler_cached(httpd_req_t *req)
 {
     http_info_request_happen();
     char *file_path = "/littlefs/cache/index.html.gz";
@@ -265,7 +267,7 @@ static esp_err_t IRAM_ATTR file_stream_handler_cached(httpd_req_t *req)
     return result;
 }
 
-static esp_err_t IRAM_ATTR file_stream_handler_cached_in_mem(httpd_req_t *req)
+static esp_err_t file_stream_handler_cached_in_mem(httpd_req_t *req)
 {
     http_info_request_happen();
     const char *mime_type = get_mime_type("index.html");
@@ -273,7 +275,7 @@ static esp_err_t IRAM_ATTR file_stream_handler_cached_in_mem(httpd_req_t *req)
     httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
     return httpd_resp_send(req, (char *)buffered_file, buffered_file_size);
 }
-static esp_err_t IRAM_ATTR file_stream_handler_cached_in_mem_optimized(httpd_req_t *req)
+static esp_err_t file_stream_handler_cached_in_mem_optimized(httpd_req_t *req)
 {
     http_info_request_happen();
     int sockfd = httpd_req_to_sockfd(req);
@@ -290,7 +292,7 @@ static esp_err_t IRAM_ATTR file_stream_handler_cached_in_mem_optimized(httpd_req
     return ESP_OK;
 }
 
-static esp_err_t IRAM_ATTR http_404_error_handler(httpd_req_t *req, httpd_err_code_t err)
+static esp_err_t http_404_error_handler(httpd_req_t *req, httpd_err_code_t err)
 {
     httpd_resp_set_status(req, HTTPD_404);
     httpd_resp_send(req, "404 error happen, please check URL", HTTPD_RESP_USE_STRLEN);
@@ -305,7 +307,7 @@ static void configure_led(void)
     ESP_LOGI(TAG, "LED Configured!\n");
 }
 
-esp_err_t IRAM_ATTR open_fn(httpd_handle_t hd, int sockfd)
+esp_err_t open_fn(httpd_handle_t hd, int sockfd)
 {
     int val = 1;
     // Disable Nagle's algorithm for instant packet delivery
@@ -373,6 +375,12 @@ void register_http_handlers()
         .handler = get_int_sys_info_handler,
         .user_ctx = NULL,
     };
+    const httpd_uri_t api_toggle_led_handled = {
+        .uri = "/api/led/toggle",
+        .method = HTTP_GET,
+        .handler = toggle_led_handler,
+        .user_ctx = NULL,
+    };
     httpd_register_uri_handler(server, &index_uri);
     httpd_register_uri_handler(server, &index_uri_cached);
     httpd_register_uri_handler(server, &index_uri_cached_in_mem);
@@ -382,6 +390,7 @@ void register_http_handlers()
     httpd_register_uri_handler(server, &led_blink);
     httpd_register_uri_handler(server, &get_requests_quantity);
     httpd_register_uri_handler(server, &get_int_sys_info);
+    httpd_register_uri_handler(server, &api_toggle_led_handled);
     httpd_register_err_handler(server, HTTPD_404_NOT_FOUND, http_404_error_handler);
 }
 
@@ -390,7 +399,7 @@ void start_webserver()
     configure_led();
     init_global_zlib();
     init_http_info_requests_counter();
-    generate_static_cache();
+    initialize_led();
 
     blinking_mutex = xSemaphoreCreateMutex();
 
@@ -400,7 +409,7 @@ void start_webserver()
     config.max_open_sockets = 7;
     config.open_fn = open_fn; // THIS LINE IS SPEEDING UP esp_http_server RESPONSE FROM 65ms TO 10ms
     config.core_id = 1;       // Improves performance on "Hello world" page from 220/s to 350/s
-
+    config.task_priority = 23;
     if (httpd_start(&server, &config) == ESP_OK)
     {
         register_http_handlers();
@@ -410,4 +419,5 @@ void start_webserver()
     {
         ESP_LOGE(TAG, "Failed to start server");
     }
+    generate_static_cache();
 }
