@@ -27,10 +27,10 @@ static void generate_response()
     cJSON_AddStringToObject(root, "model", int_sys_info.model);
     cJSON_AddNumberToObject(root, "flashSize", int_sys_info.flash_size);
     cJSON_AddNumberToObject(root, "totalSram", int_sys_info.total_sram);
+    cJSON_AddNumberToObject(root, "freeSram", int_sys_info.free_ram);
     cJSON_AddNumberToObject(root, "totalPsram", int_sys_info.total_psram);
-    cJSON_AddNumberToObject(root, "wifiSignal", int_sys_info.wifi_signal);
-    cJSON_AddNumberToObject(root, "freeRam", int_sys_info.free_ram);
     cJSON_AddNumberToObject(root, "freePsram", int_sys_info.free_psram);
+    cJSON_AddNumberToObject(root, "wifiSignal", int_sys_info.wifi_signal);
     cJSON_AddNumberToObject(root, "cpuTemperature", int_sys_info.cpu_temperature);
 
     result_buf = cJSON_PrintUnformatted(root);

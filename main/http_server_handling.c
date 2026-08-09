@@ -2,7 +2,6 @@
 #include "esp_log.h"
 #include "esp_http_server.h"
 #include "driver/gpio.h"
-#include "zlib.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -17,7 +16,8 @@
 #include "api/led.h"
 #include "helpers/led.h"
 
-#define OUTPUT_LED 22
+// #define OUTPUT_LED 22 // use this for esp32 lite
+#define OUTPUT_LED 38
 #define LED_ON 0
 #define LED_OFF 1
 

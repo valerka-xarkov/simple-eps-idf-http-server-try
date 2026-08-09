@@ -59,7 +59,7 @@ int get_size()
     return size;
 }
 
-void get_requests_quantity_information(struct requests_per_second *res)
+void get_requests_quantity_information(struct requests_per_second res[])
 {
 
     for (int i = 0; i < size; i++)
@@ -68,38 +68,3 @@ void get_requests_quantity_information(struct requests_per_second *res)
         res[i] = requests_information[index];
     }
 }
-
-// char *get_requests_information_http()
-// {
-//     if (result_buf[0] != 0)
-//     {
-//         return result_buf;
-//     }
-
-//     struct tm *info;
-//     char formatted_date[30];
-//     cJSON *root = cJSON_CreateObject();
-//     cJSON_AddNumberToObject(root, "count", size);
-//     cJSON *items = cJSON_AddArrayToObject(root, "items");
-
-//     for (int i = 0; i < size; i++)
-//     {
-//         int index = size >= QUEUE_SIZE ? (head + i) % 100 : i;
-//         time_t time = requests_information[index].time;
-//         int requests_quantity = requests_information[index].requests_quantity;
-//         info = localtime(&time);
-//         strftime(formatted_date, sizeof(formatted_date), "%Y-%m-%d %H:%M:%S", info);
-
-//         cJSON *statistic_item = cJSON_CreateObject();
-//         cJSON_AddNumberToObject(statistic_item, "time", time);
-//         cJSON_AddNumberToObject(statistic_item, "requestsQuantity", requests_quantity);
-//         cJSON_AddStringToObject(statistic_item, "dateTime", formatted_date);
-//         cJSON_AddItemToArray(items, statistic_item);
-//     }
-
-//     char *res = cJSON_PrintUnformatted(root);
-//     strcpy(result_buf, res);
-//     free(res);
-//     cJSON_Delete(root);
-//     return result_buf;
-// }

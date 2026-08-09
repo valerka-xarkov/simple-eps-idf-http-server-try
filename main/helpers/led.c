@@ -75,7 +75,6 @@ void toggle_led_callback(TimerHandle_t xTimer)
 
     *rgb[next_index] = *rgb[cur_index] == 0 ? cur_led_bright : *rgb[next_index] + cur_led_bright_step > cur_led_bright ? cur_led_bright
                                                                                                                        : *rgb[next_index] + cur_led_bright_step;
-    // ESP_LOGI(TAG, "index, next index, values %d %d, %d %d %d", cur_index, next_index, led_color.red, led_color.green, led_color.blue);
 }
 
 void switch_led_on()
