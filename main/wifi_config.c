@@ -122,3 +122,46 @@ void wifi_init_sta(void)
         ESP_LOGE(TAG, "UNEXPECTED EVENT");
     }
 }
+
+static void wifi_event_handler(void *arg, esp_event_base_t event_base,
+                               int32_t event_id, void *event_data)
+{
+    ESP_LOGI(TAG, "Evento n°: %ld!", event_id);
+    // printf("Evento n°: %ld!\n", event_id);
+}
+
+void wifi_init_softap()
+{
+    esp_netif_init();
+    esp_event_loop_create_default();
+    esp_netif_create_default_wifi_ap();
+
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT(); // sempre iniziare da qui
+
+    esp_wifi_init(&cfg);
+
+    esp_event_handler_instance_register(WIFI_EVENT,
+                                        ESP_EVENT_ANY_ID,
+                                        &wifi_event_handler,
+                                        NULL,
+                                        NULL);
+    wifi_config_t wifi_config = {
+        .ap = {
+            .ssid = "TEST_WORKSHOP",
+            // .ssid_len = strlen(ssid),
+            .channel = 1,
+            .password = "test_esp",
+            .max_connection = 2,
+            .authmode = WIFI_AUTH_WPA2_PSK,
+            .pmf_cfg = {
+                .required = true,
+            },
+        },
+    };
+
+    esp_wifi_set_mode(WIFI_MODE_AP);
+    esp_wifi_set_config(WIFI_IF_AP, &wifi_config);
+    esp_wifi_start();
+
+    ESP_LOGI(TAG, "wifi_init_softap completata.");
+}

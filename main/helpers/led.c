@@ -2,8 +2,6 @@
 #include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "esp_log.h"
-#include "freertos/timers.h"
 
 #define BLINK_GPIO 48
 #define MAX_LED_BRIGHTNESS 255
@@ -58,7 +56,7 @@ void toggle_led_callback(TimerHandle_t xTimer)
 {
     led_strip_set_pixel(led_strip, 0, led_color.red, led_color.green, led_color.blue);
     led_strip_refresh(led_strip);
-    int *rgb[LED_COLOR_COUNTS] = {&led_color.red, &led_color.green, &led_color.blue};
+    int *rgb[] = {&led_color.red, &led_color.green, &led_color.blue};
     int cur_index = 0;
     for (int i = 0; i < LED_COLOR_COUNTS; i++)
     {

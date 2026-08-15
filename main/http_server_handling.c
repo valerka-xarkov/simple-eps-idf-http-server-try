@@ -15,6 +15,8 @@
 #include "helpers/page_cache_generator.h"
 #include "api/led.h"
 #include "helpers/led.h"
+#include "helpers/led_touch.h"
+#include "helpers/touch_events_helper.h"
 
 // #define OUTPUT_LED 22 // use this for esp32 lite
 #define OUTPUT_LED 38
@@ -62,12 +64,13 @@ const char *get_mime_type(const char *filename)
     return HTTPD_TYPE_OCTET; // Default fallback
 }
 
-static const char *hello_world_message = "<h1>Hello World</h1>";
+static const char *hello_world_message = "<h1>Hello World</h1>"; // 20 symbols
 
 static esp_err_t hello_get_handler(httpd_req_t *req)
 {
     http_info_request_happen();
-    httpd_resp_send(req, hello_world_message, HTTPD_RESP_USE_STRLEN);
+    // httpd_resp_send(req, hello_world_message, HTTPD_RESP_USE_STRLEN);
+    httpd_resp_send(req, hello_world_message, 20);
     return ESP_OK;
 }
 
@@ -400,7 +403,8 @@ void start_webserver()
     init_global_zlib();
     init_http_info_requests_counter();
     initialize_led();
-
+    initialize_touch_events();
+    initialize_led_touch();
     blinking_mutex = xSemaphoreCreateMutex();
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
