@@ -40,6 +40,20 @@ typedef struct
     touch_click_events_helper_t event;
 } touch_click_handler_data_t;
 
+char *get_event_name(touch_click_events_helper_t event)
+{
+    switch (event)
+    {
+    case TOUCH_CLICK:
+        return "TOUCH_CLICK";
+    case TOUCH_LONG_TOUCH_START:
+        return "TOUCH_LONG_TOUCH_START";
+    case TOUCH_LONG_TOUCH_END:
+        return "TOUCH_LONG_TOUCH_END";
+    };
+    return "UNKNOWN_EVENT";
+}
+
 static void touch_down_watch_handler(void *pvParams)
 {
     vTaskDelay(pdMS_TO_TICKS(max_click_time));

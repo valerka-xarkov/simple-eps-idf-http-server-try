@@ -2,13 +2,15 @@
 #include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "touch_events_helper.h"
+#include "esp_log.h"
 
 #define BLINK_GPIO 48
 #define MAX_LED_BRIGHTNESS 255
 #define LED_COLOR_COUNTS 3
 #define LED_BRIGHT_STEP 10
 
-// static const char *TAG = "LED-HELPER";
+static const char *TAG = "LED-HELPER";
 
 static led_strip_handle_t led_strip;
 static TimerHandle_t toggle_led_timer = NULL;
@@ -26,26 +28,8 @@ static r_g_b_descriptor led_color = {
     .blue = 0,
 };
 static int cur_led_bright = MAX_LED_BRIGHTNESS * 0.2;
-
-void initialize_led()
-{
-    led_strip_config_t strip_config = {
-        .strip_gpio_num = BLINK_GPIO,
-        .max_leds = 1, // one LED on board
-        .led_model = LED_MODEL_WS2812,
-        .flags.invert_out = false,
-    };
-
-    led_strip_rmt_config_t rmt_config = {
-        .resolution_hz = 10 * 1000 * 1000, // 10MHz
-        .flags.with_dma = false,
-        .clk_src = RMT_CLK_SRC_DEFAULT,
-    };
-
-    led_strip_new_rmt_device(&strip_config, &rmt_config, &led_strip);
-    led_strip_clear(led_strip);
-    led_color.red = cur_led_bright;
-}
+static int top_button_chanels[] = {4};
+static int bottom_button_chanels[] = {11};
 
 static int get_next_index(int index)
 {
@@ -100,4 +84,40 @@ void switch_led_off()
     /* Clear the memory or set color array elements to 0 to turn off */
     led_strip_clear(led_strip);
     // ESP_LOGI(TAG, "LED Status: OFF");
+}
+
+static void top_click_handler(touch_click_events_helper_t event)
+{
+    char *event_name = get_event_name(event);
+    ESP_LOGI(TAG, "Up handler (Channel-GPIO 4) %s", event_name);
+}
+
+static void bottom_click_handler(touch_click_events_helper_t event)
+{
+    char *event_name = get_event_name(event);
+    ESP_LOGI(TAG, "Down handler (Channel-GPIO 11) %s", event_name);
+}
+
+void initialize_led()
+{
+    led_strip_config_t strip_config = {
+        .strip_gpio_num = BLINK_GPIO,
+        .max_leds = 1, // one LED on board
+        .led_model = LED_MODEL_WS2812,
+        .flags.invert_out = false,
+    };
+
+    led_strip_rmt_config_t rmt_config = {
+        .resolution_hz = 10 * 1000 * 1000, // 10MHz
+        .flags.with_dma = false,
+        .clk_src = RMT_CLK_SRC_DEFAULT,
+    };
+
+    led_strip_new_rmt_device(&strip_config, &rmt_config, &led_strip);
+    led_strip_clear(led_strip);
+    led_color.red = cur_led_bright;
+
+    add_touch_chanel(top_button_chanels, sizeof(top_button_chanels) / sizeof(int), (touch_event_cb)&top_click_handler);
+    add_touch_chanel(bottom_button_chanels, sizeof(bottom_button_chanels) / sizeof(int), bottom_click_handler);
+    ESP_LOGI(TAG, "LED touch initialized on pin 4(up click) and 11(down click)");
 }

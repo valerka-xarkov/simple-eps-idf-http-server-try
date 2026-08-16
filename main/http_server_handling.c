@@ -15,7 +15,6 @@
 #include "helpers/page_cache_generator.h"
 #include "api/led.h"
 #include "helpers/led.h"
-#include "helpers/led_touch.h"
 #include "helpers/touch_events_helper.h"
 
 // #define OUTPUT_LED 22 // use this for esp32 lite
@@ -402,9 +401,8 @@ void start_webserver()
     configure_led();
     init_global_zlib();
     init_http_info_requests_counter();
-    initialize_led();
     initialize_touch_events();
-    initialize_led_touch();
+    initialize_led();
     blinking_mutex = xSemaphoreCreateMutex();
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
