@@ -8,11 +8,10 @@
 
 #define SAMPLE_NUM 1
 #define MAX_TOUCH_GROUPS_COUNT 14
+#define MIN_CLICK_TIME 10
+#define MAX_CLICK_TIME 300
 static const char *TAG = "TOUCH-EVENTS";
 static touch_sensor_handle_t sensor_handle = NULL;
-
-static int min_click_time = 10;
-static int max_click_time = 300;
 
 static touch_channel_config_t chan_cfg;
 
@@ -27,12 +26,12 @@ typedef struct
     int64_t start_touch_time;
     int touch_counter;
     bool long_touch_started;
+    TaskHandle_t touch_down_task_handle;
 } touch_group_handler_data_t;
 
 static touch_group_handler_data_t touch_groups[MAX_TOUCH_GROUPS_COUNT];
 static int touch_groups_quantity = 0;
 SemaphoreHandle_t touch_down_mutex;
-TaskHandle_t touch_down_task_handle;
 
 typedef struct
 {
@@ -56,7 +55,7 @@ char *get_event_name(touch_click_events_helper_t event)
 
 static void touch_down_watch_handler(void *pvParams)
 {
-    vTaskDelay(pdMS_TO_TICKS(max_click_time));
+    vTaskDelay(pdMS_TO_TICKS(MAX_CLICK_TIME));
     if (xSemaphoreTake(touch_down_mutex, portMAX_DELAY))
     {
         touch_group_handler_data_t *group_data = (touch_group_handler_data_t *)pvParams;
@@ -71,7 +70,7 @@ static void touch_down_watch_handler(void *pvParams)
         {
             cb(TOUCH_LONG_TOUCH_START);
         }
-        touch_down_task_handle = NULL;
+        group_data->touch_down_task_handle = NULL;
         xSemaphoreGive(touch_down_mutex);
         vTaskDelete(NULL);
     }
@@ -102,7 +101,6 @@ static bool is_channel_in_group(int *channels, int chan_quantity, int chan_id)
 {
     for (int c = 0; c < chan_quantity; c++)
     {
-        // ESP_EARLY_LOGI(TAG, "channels[c] %d %d %d", c, channels[c], chan_id);
         if (channels[c] == chan_id)
         {
             return true;
@@ -138,7 +136,7 @@ static bool IRAM_ATTR touch_active_callback(touch_sensor_handle_t sens_handle, c
         int cur_priority = uxTaskPriorityGet(NULL);
         int watch_task_priority = cur_priority > 5 ? 5 : cur_priority < 2 ? cur_priority
                                                                           : cur_priority - 1;
-        xTaskCreate(touch_down_watch_handler, "touch-down-handler", 2048, touched_group, watch_task_priority, &touch_down_task_handle);
+        xTaskCreate(touch_down_watch_handler, "touch-down-handler", 2048, touched_group, watch_task_priority, &(touched_group->touch_down_task_handle));
     }
     touched_group->touch_counter++;
 
@@ -159,17 +157,18 @@ static bool IRAM_ATTR touch_inactive_callback(touch_sensor_handle_t sens_handle,
         if (xSemaphoreTake(touch_down_mutex, portMAX_DELAY))
         {
 
-            if ((time_diff > min_click_time && time_diff < max_click_time) || (time_diff > max_click_time && touched_group->long_touch_started))
+            if ((time_diff > MIN_CLICK_TIME && time_diff < MAX_CLICK_TIME) || (time_diff > MAX_CLICK_TIME && touched_group->long_touch_started))
             {
                 touch_click_handler_data_t *data = malloc(sizeof(touch_click_handler_data_t));
                 data->cb = touched_group->cb;
-                data->event = time_diff < max_click_time ? TOUCH_CLICK : TOUCH_LONG_TOUCH_END;
+                data->event = time_diff < MAX_CLICK_TIME ? TOUCH_CLICK : TOUCH_LONG_TOUCH_END;
                 xQueueSendFromISR(touch_events_queue, &data, &high_priority_task_awoken);
             }
 
-            if (touch_down_task_handle != NULL)
+            if (touched_group->touch_down_task_handle != NULL)
             {
-                vTaskDelete(touch_down_task_handle);
+                vTaskDelete(touched_group->touch_down_task_handle);
+                touched_group->touch_down_task_handle = NULL;
             }
             xSemaphoreGive(touch_down_mutex);
         }

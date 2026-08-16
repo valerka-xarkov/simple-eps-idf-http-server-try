@@ -27,7 +27,7 @@ static r_g_b_descriptor led_color = {
     .green = 0,
     .blue = 0,
 };
-static int cur_led_bright = MAX_LED_BRIGHTNESS * 0.2;
+static int cur_led_bright = 10;
 static int top_button_chanels[] = {4};
 static int bottom_button_chanels[] = {11};
 
