@@ -21,7 +21,7 @@ SemaphoreHandle_t led_mutex;
 typedef enum
 {
     LED_SMOOTH_SHIFTING,
-    LED_STEP_BY_STEP,
+    LED_STEP_BY_STEP_JUMP,
 } led_flashing_mode_t;
 
 static bool is_led_on = false;
@@ -41,7 +41,7 @@ static int cur_led_bright = 10;
 
 static int top_button_chanels[] = {4};
 static int bottom_button_chanels[] = {11};
-
+static led_flashing_mode_t led_switching_mode;
 static int get_next_index(int index)
 {
     return index + 1 >= LED_COLOR_COUNTS ? 0 : index + 1;
@@ -73,6 +73,21 @@ static void switch_on_handle(TimerHandle_t xTimer)
         *rgb[cur_index] = *rgb[cur_index] - cur_led_bright_step < 0 ? 0 : *rgb[cur_index] - cur_led_bright_step;
 
         *rgb[next_index] = *rgb[next_index] + cur_led_bright_step > cur_led_bright || *rgb[cur_index] == 0 ? cur_led_bright : *rgb[next_index] + cur_led_bright_step;
+        xSemaphoreGive(led_mutex);
+    }
+}
+
+static void step_by_step_handle(TimerHandle_t xTimer)
+{
+    if (xSemaphoreTake(led_mutex, portMAX_DELAY))
+    {
+        int *rgb[] = {&led_color.red, &led_color.green, &led_color.blue};
+        int cur_index = get_cur_index(rgb);
+        int next_index = get_next_index(cur_index);
+        *rgb[cur_index] = 0;
+        *rgb[next_index] = cur_led_bright;
+        led_strip_set_pixel(led_strip, 0, led_color.red, led_color.green, led_color.blue);
+        led_strip_refresh(led_strip);
         xSemaphoreGive(led_mutex);
     }
 }
@@ -118,18 +133,22 @@ void fade_out_handle(TimerHandle_t xTimer)
     }
 }
 
+void start_led_timer()
+{
+    TimerCallbackFunction_t cb = led_switching_mode == LED_SMOOTH_SHIFTING ? switch_on_handle : step_by_step_handle;
+    int timeout = led_switching_mode == LED_SMOOTH_SHIFTING ? 20 : 400;
+
+    toggle_led_timer = xTimerCreate("toggle-led-timer", pdMS_TO_TICKS(timeout), pdTRUE, (void *)0, cb);
+    xTimerStart(toggle_led_timer, 0);
+}
+
 void switch_led_on()
 {
     if (toggle_led_timer != NULL && xTimerIsTimerActive(toggle_led_timer))
     {
         return;
     }
-    led_color.red = cur_led_bright;
-    led_color.green = 0;
-    led_color.blue = 0;
-
-    toggle_led_timer = xTimerCreate("toggle-led-timer", pdMS_TO_TICKS(20), pdTRUE, (void *)0, switch_on_handle);
-    xTimerStart(toggle_led_timer, 0);
+    start_led_timer();
 }
 
 void switch_led_off()
@@ -144,6 +163,21 @@ void switch_led_off()
     // ESP_LOGI(TAG, "LED Status: OFF");
 }
 
+void change_led_switching_mode()
+{
+    if (xSemaphoreTake(led_mutex, portMAX_DELAY))
+    {
+        led_switching_mode = led_switching_mode == LED_SMOOTH_SHIFTING ? LED_STEP_BY_STEP_JUMP : LED_SMOOTH_SHIFTING;
+        is_led_on = true;
+        if (toggle_led_timer != NULL && xTimerIsTimerActive(toggle_led_timer))
+        {
+            xTimerStop(toggle_led_timer, portMAX_DELAY);
+            xTimerDelete(toggle_led_timer, portMAX_DELAY);
+        }
+        start_led_timer();
+        xSemaphoreGive(led_mutex);
+    }
+}
 bool toggle_led()
 {
     if (xSemaphoreTake(led_mutex, portMAX_DELAY))
@@ -212,14 +246,12 @@ static void top_click_handler(touch_click_events_helper_t event)
 static void bottom_click_handler(touch_click_events_helper_t event)
 {
     if (event == TOUCH_CLICK)
-    {
-        toggle_led();
-    }
+        change_led_switching_mode();
     else if (event == TOUCH_LONG_TOUCH_START)
         start_fade_led_out();
     else if (event == TOUCH_LONG_TOUCH_END)
         stop_fade_lade_in_out();
-    ESP_LOGI(TAG, "Down handler (Channel-GPIO 11) %s", get_event_name(event));
+    // ESP_LOGI(TAG, "Down handler (Channel-GPIO 11) %s", get_event_name(event));
 }
 
 void initialize_led()
