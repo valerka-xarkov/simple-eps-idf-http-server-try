@@ -16,6 +16,7 @@
 #include "api/led.h"
 #include "helpers/led.h"
 #include "helpers/touch_events_helper.h"
+#include "web-modules/main-page/main_page.h"
 
 // #define OUTPUT_LED 22 // use this for esp32 lite
 #define OUTPUT_LED 38
@@ -323,7 +324,7 @@ void register_http_handlers()
     const httpd_uri_t index_uri = {
         .uri = "/",
         .method = HTTP_GET,
-        .handler = file_stream_handler,
+        .handler = get_main_page,
         .user_ctx = NULL,
     };
     const httpd_uri_t index_uri_cached = {
@@ -412,6 +413,7 @@ void start_webserver()
     config.open_fn = open_fn; // THIS LINE IS SPEEDING UP esp_http_server RESPONSE FROM 65ms TO 10ms
     config.core_id = 1;       // Improves performance on "Hello world" page from 220/s to 350/s
     config.task_priority = 23;
+    config.stack_size = 8192 * 2;
     if (httpd_start(&server, &config) == ESP_OK)
     {
         register_http_handlers();

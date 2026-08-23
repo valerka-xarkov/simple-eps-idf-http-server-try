@@ -1,0 +1,38 @@
+
+#include "stdio.h"
+#include "main_page_template.h"
+
+void get_main_template(main_page_template_context_t *data, void *cb_context, template_data_callback cb) {
+
+
+cb(cb_context, "\r\n<!DOCTYPE html>\r\n<html lang=\"en\">\r\n\r\n<head>\r\n    <title>My Webpage</title>\r\n</head>\r\n\r\n<body>\r\n    <p>Hei, welcome to my blog! I'm ");
+cb(cb_context, data->name);
+cb(cb_context, " ");
+cb(cb_context, data->surname);
+cb(cb_context, " and I'm ");
+
+char buf3[20];
+sprintf(buf3, "%d", data->age);
+cb(cb_context, buf3);
+
+cb(cb_context, " years\r\n        old!</p>\r\n    <p>");
+cb(cb_context, data->test1);
+cb(cb_context, data->test2);
+cb(cb_context, "</p>\r\n    <ul>\r\n        ");
+
+        main_page_template_post_t *posts = data->posts;
+        
+cb(cb_context, "\r\n        ");
+ for (int i = 0; i < data->posts_count; i++) {
+            main_page_template_post_t post = posts[i];
+            
+cb(cb_context, " <li>");
+cb(cb_context, post.title);
+cb(cb_context, " - ");
+cb(cb_context, post.date);
+cb(cb_context, "</li>\r\n            ");
+ } 
+cb(cb_context, "\r\n    </ul>\r\n</body>\r\n\r\n</html>\r\n\r\n");
+
+}
+
