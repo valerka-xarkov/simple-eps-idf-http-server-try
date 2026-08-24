@@ -17,6 +17,7 @@
 #include "helpers/led.h"
 #include "helpers/touch_events_helper.h"
 #include "web-modules/main-page/main_page.h"
+#include "api/performance-testing.h"
 
 // #define OUTPUT_LED 22 // use this for esp32 lite
 #define OUTPUT_LED 38
@@ -71,6 +72,19 @@ static esp_err_t hello_get_handler(httpd_req_t *req)
     http_info_request_happen();
     // httpd_resp_send(req, hello_world_message, HTTPD_RESP_USE_STRLEN);
     httpd_resp_send(req, hello_world_message, 20);
+    return ESP_OK;
+}
+
+static char *hello_optimized_message = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 20\r\n\r\n<h1>Hello World</h1>";
+
+static esp_err_t hello_optimized_get_handler(httpd_req_t *req)
+{
+    http_info_request_happen();
+    int sockfd = httpd_req_to_sockfd(req);
+    if (sockfd < 0)
+        return ESP_FAIL;
+
+    httpd_send(req, hello_optimized_message, 84);
     return ESP_OK;
 }
 
@@ -273,8 +287,6 @@ static esp_err_t file_stream_handler_cached(httpd_req_t *req)
 static esp_err_t file_stream_handler_cached_in_mem(httpd_req_t *req)
 {
     http_info_request_happen();
-    const char *mime_type = get_mime_type("index.html");
-    httpd_resp_set_type(req, mime_type);
     httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
     return httpd_resp_send(req, (char *)buffered_file, buffered_file_size);
 }
@@ -351,6 +363,12 @@ void register_http_handlers()
         .handler = hello_get_handler,
         .user_ctx = NULL,
     };
+    const httpd_uri_t index_uri_hello_world_optimized = {
+        .uri = "/hello-world-optimized",
+        .method = HTTP_GET,
+        .handler = hello_optimized_get_handler,
+        .user_ctx = NULL,
+    };
 
     const httpd_uri_t led_toggle = {
         .uri = "/led/toggle",
@@ -384,16 +402,25 @@ void register_http_handlers()
         .handler = toggle_led_handler,
         .user_ctx = NULL,
     };
+    const httpd_uri_t api_performance_testing_handled = {
+        .uri = "/api/performance-testing",
+        .method = HTTP_GET,
+        .handler = performance_testing_api,
+        .user_ctx = NULL,
+    };
+
     httpd_register_uri_handler(server, &index_uri);
     httpd_register_uri_handler(server, &index_uri_cached);
     httpd_register_uri_handler(server, &index_uri_cached_in_mem);
     httpd_register_uri_handler(server, &index_uri_cached_in_mem_optimized);
     httpd_register_uri_handler(server, &index_uri_hello_world);
+    httpd_register_uri_handler(server, &index_uri_hello_world_optimized);
     httpd_register_uri_handler(server, &led_toggle);
     httpd_register_uri_handler(server, &led_blink);
     httpd_register_uri_handler(server, &get_requests_quantity);
     httpd_register_uri_handler(server, &get_int_sys_info);
     httpd_register_uri_handler(server, &api_toggle_led_handled);
+    httpd_register_uri_handler(server, &api_performance_testing_handled);
     httpd_register_err_handler(server, HTTPD_404_NOT_FOUND, http_404_error_handler);
 }
 
@@ -406,6 +433,7 @@ void start_webserver()
     initialize_led();
 
     initialize_main_page();
+    initialize_performance_testing_api();
 
     blinking_mutex = xSemaphoreCreateMutex();
 
