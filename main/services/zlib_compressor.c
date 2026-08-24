@@ -4,6 +4,7 @@
 #include "zlib_compressor.h"
 #include "esp_heap_caps.h"
 
+#define CHUNK_OUT_SIZE 2048
 static z_stream g_strm;
 static uint8_t *out_buf = NULL;
 static char *in_buf = NULL;
@@ -100,40 +101,69 @@ esp_err_t send_compressed_stream_cached(data_provider_cb provide_data, void *dp_
     return ESP_OK;
 }
 
-esp_err_t compress_string_to_buffer(const char *src, uint8_t *dest, size_t dest_max, size_t *out_len)
+esp_err_t compress_string_to_buffer(char *input_string, int string_len, uint8_t **out_buffer, size_t *out_size)
 {
-    int ret = deflateReset(&g_strm);
-    if (ret != Z_OK)
+    if (deflateReset(&g_strm) != Z_OK)
     {
         ESP_LOGE(TAG, "Deflate reset failed");
         return ESP_FAIL;
     }
 
-    // Assign input parameters
-    g_strm.next_in = (uint8_t *)src;
-    g_strm.avail_in = strlen(src);
+    // Assign the whole string to the entry tracking windows immediately
+    g_strm.next_in = (z_const Bytef *)input_string;
+    g_strm.avail_in = (uInt)string_len;
 
-    // Assign output destination parameters
-    g_strm.next_out = dest;
-    g_strm.avail_out = dest_max;
-
-    // Run the compression pipeline in a single step (Z_FINISH forces total compression)
-    ret = deflate(&g_strm, Z_FINISH);
-
-    // Z_STREAM_END indicates that all input was successfully converted and closed out
-    if (ret != Z_STREAM_END)
+    // Allocate an initial dynamic destination buffer array space safely
+    size_t current_capacity = CHUNK_OUT_SIZE;
+    uint8_t *dest_buffer = (uint8_t *)heap_caps_malloc(current_capacity, MALLOC_CAP_SPIRAM);
+    if (dest_buffer == NULL)
     {
-        if (ret == Z_OK)
-        {
-            ESP_LOGE(TAG, "Destination buffer too small to fit compressed data");
-            return ESP_ERR_NO_MEM;
-        }
-        ESP_LOGE(TAG, "Compression failed with error code: %d", ret);
-        return ESP_FAIL;
+        return ESP_ERR_NO_MEM;
     }
+    size_t total_written = 0;
 
-    // Calculate how many bytes were actually written to the output array
-    *out_len = dest_max - g_strm.avail_out;
+    int ret;
+    // Compress string elements using the cached intermediate array space
+    do
+    {
+        g_strm.next_out = out_buf;
+        g_strm.avail_out = CHUNK_OUT_SIZE;
+
+        // Since the entire payload data is visible in next_in, tell zlib to finish the stream output straight away
+        ret = deflate(&g_strm, Z_FINISH);
+        if (ret == Z_STREAM_ERROR)
+        {
+            ESP_LOGE(TAG, "Critical string processing engine deflation failure");
+            heap_caps_free(dest_buffer);
+            return ESP_FAIL;
+        }
+
+        size_t produced = CHUNK_OUT_SIZE - g_strm.avail_out;
+        if (produced > 0)
+        {
+            // Scale out target buffer memory layout if space limitations are hit
+            if (total_written + produced > current_capacity)
+            {
+                current_capacity += produced; // Dynamically expand precisely by the chunk requirements
+                uint8_t *new_dest = heap_caps_realloc(dest_buffer, current_capacity, MALLOC_CAP_SPIRAM);
+                if (new_dest == NULL)
+                {
+                    heap_caps_free(dest_buffer);
+                    return ESP_ERR_NO_MEM;
+                }
+                dest_buffer = new_dest;
+            }
+            // Move payload blocks from intermediate cache to their permanent dynamic home
+            memcpy(dest_buffer + total_written, out_buf, produced);
+            total_written += produced;
+        }
+    } while (ret != Z_STREAM_END);
+
+    // Pass back pointer structures and size details safely
+    *out_buffer = dest_buffer;
+    *out_size = total_written;
+
+    ESP_LOGI(TAG, "String successfully compressed. Original: %u bytes -> Compressed: %u bytes.", string_len, total_written);
     return ESP_OK;
 }
 
@@ -198,6 +228,112 @@ esp_err_t compress_stream_to_file(FILE *dest_file, data_provider_cb provide_data
             }
         }
     }
+
+    return ESP_OK;
+}
+
+esp_err_t compress_stream_to_buffer(data_provider_cb read_stream_func, void *cxt, uint8_t **out_buffer, size_t *out_size)
+{
+    if (deflateReset(&g_strm) != Z_OK)
+    {
+        ESP_LOGE(TAG, "Deflate file engine reset failed");
+        return ESP_FAIL;
+    }
+
+    size_t current_capacity = 4096;
+    uint8_t *dest_buffer = (uint8_t *)heap_caps_malloc(current_capacity, MALLOC_CAP_SPIRAM);
+
+    if (dest_buffer == NULL)
+    {
+        return ESP_ERR_NO_MEM;
+    }
+    size_t total_written = 0;
+    bool is_stream_finished = false;
+
+    while (!is_stream_finished)
+    {
+        // --- 1. INVOKE STREAM CALLBACK GENERATOR ---
+        // Dynamically request next stream slice using user-defined callback logic
+        size_t bytes_read = read_stream_func(in_buf, COMPRESSOR_BUFFER_SIZE, cxt);
+
+        if (bytes_read == 0)
+        {
+            is_stream_finished = true;
+            break; // Move to flushing sequence immediately
+        }
+
+        g_strm.next_in = (uint8_t *)in_buf;
+        g_strm.avail_in = bytes_read;
+
+        // --- 2. DEFLATE THE GENERATED SEGMENT CHUNKS ---
+        while (g_strm.avail_in > 0)
+        {
+            g_strm.next_out = out_buf;
+            g_strm.avail_out = COMPRESSOR_BUFFER_SIZE;
+
+            int ret = deflate(&g_strm, Z_NO_FLUSH);
+            if (ret == Z_STREAM_ERROR)
+            {
+                ESP_LOGE(TAG, "Compression mapping pipeline crash");
+                heap_caps_free(dest_buffer);
+                return ESP_FAIL;
+            }
+
+            size_t produced = COMPRESSOR_BUFFER_SIZE - g_strm.avail_out;
+            if (produced > 0)
+            {
+                if (total_written + produced > current_capacity)
+                {
+                    current_capacity += (produced > 1024) ? produced : 1024;
+                    uint8_t *new_dest = heap_caps_realloc(dest_buffer, current_capacity, MALLOC_CAP_SPIRAM);
+                    if (new_dest == NULL)
+                    {
+                        heap_caps_free(dest_buffer);
+                        return ESP_ERR_NO_MEM;
+                    }
+                    dest_buffer = new_dest;
+                }
+                memcpy(dest_buffer + total_written, out_buf, produced);
+                total_written += produced;
+            }
+        }
+    }
+
+    // --- 3. FINAL FLUSH AND COMPACTION ---
+    int flush_ret;
+    do
+    {
+        g_strm.next_out = out_buf;
+        g_strm.avail_out = COMPRESSOR_BUFFER_SIZE;
+
+        flush_ret = deflate(&g_strm, Z_FINISH);
+        if (flush_ret == Z_STREAM_ERROR)
+        {
+            heap_caps_free(dest_buffer);
+            return ESP_FAIL;
+        }
+
+        size_t produced = COMPRESSOR_BUFFER_SIZE - g_strm.avail_out;
+        if (produced > 0)
+        {
+            if (total_written + produced > current_capacity)
+            {
+                current_capacity += produced;
+                uint8_t *new_dest = heap_caps_realloc(dest_buffer, current_capacity, MALLOC_CAP_SPIRAM);
+                if (new_dest == NULL)
+                {
+                    heap_caps_free(dest_buffer);
+                    return ESP_ERR_NO_MEM;
+                }
+                dest_buffer = new_dest;
+            }
+            memcpy(dest_buffer + total_written, out_buf, produced);
+            total_written += produced;
+        }
+    } while (flush_ret != Z_STREAM_END);
+
+    *out_buffer = dest_buffer;
+    *out_size = total_written;
 
     return ESP_OK;
 }

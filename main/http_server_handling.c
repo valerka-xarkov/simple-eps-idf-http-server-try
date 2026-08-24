@@ -404,6 +404,9 @@ void start_webserver()
     init_http_info_requests_counter();
     initialize_touch_events();
     initialize_led();
+
+    initialize_main_page();
+
     blinking_mutex = xSemaphoreCreateMutex();
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
@@ -413,7 +416,7 @@ void start_webserver()
     config.open_fn = open_fn; // THIS LINE IS SPEEDING UP esp_http_server RESPONSE FROM 65ms TO 10ms
     config.core_id = 1;       // Improves performance on "Hello world" page from 220/s to 350/s
     config.task_priority = 23;
-    config.stack_size = 8192 * 2;
+    // config.stack_size = 8192 * 2;
     if (httpd_start(&server, &config) == ESP_OK)
     {
         register_http_handlers();
