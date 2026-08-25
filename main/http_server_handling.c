@@ -267,7 +267,7 @@ static esp_err_t file_stream_handler_cached(httpd_req_t *req)
         httpd_resp_send_404(req);
         return ESP_FAIL;
     }
-    const int buf_len = 512;
+    const int buf_len = 1024;
     uint8_t *buf = malloc(buf_len);
     int read_len = 0;
     do
