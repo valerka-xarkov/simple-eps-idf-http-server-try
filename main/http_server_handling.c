@@ -438,13 +438,16 @@ void start_webserver()
     blinking_mutex = xSemaphoreCreateMutex();
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.lru_purge_enable = false; // should be false. Checked with true, and it is slower
+    // Looks like connections are not always closed, if false it can cause potential memory leak and stop accept connections at all
+    config.lru_purge_enable = true; // must be true because of issues after too many connections if false it will stop accept new connections.
     config.max_uri_handlers = 20;
     config.max_open_sockets = 7;
     config.open_fn = open_fn; // THIS LINE IS SPEEDING UP esp_http_server RESPONSE FROM 65ms TO 10ms
     config.core_id = 1;       // Improves performance on "Hello world" page from 220/s to 350/s
     config.task_priority = 23;
-    // config.stack_size = 8192 * 2;
+    config.recv_wait_timeout = 5;
+    config.send_wait_timeout = 5;
+    // config.stack_size = 1024 * 16;
     if (httpd_start(&server, &config) == ESP_OK)
     {
         register_http_handlers();

@@ -1,0 +1,28 @@
+{
+  "name": "load-testing",
+  "version": "1.0.0",
+  "description": "Load testing project for simple esp32 http werver",
+  "license": "ISC",
+  "author": "",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "cached-in-mem-testing": "node ./dist/cached-in-mem.js",
+    "performance-testing": "node ./dist/performance-testing.js",
+    "hello-world-testing": "node ./dist/hello-world.js",
+    "toggle-testing": "node ./dist/toggle-page.js",
+    "requests-quantity-testing": "node ./dist/requests-quantity.js",
+    "blink-testing": "node ./dist/blink-page.js",
+    "int-sys-info": "node ./dist/int-sys-info.js",
+    "watch": "tsc -w"
+  },
+  "dependencies": {
+    "autocannon": "^8.0.0",
+    "typescript": "^7.0.2"
+  },
+  "devDependencies": {
+    "@types/autocannon": "^7.12.7",
+    "@types/node": "^26.1.1"
+  }
+}
