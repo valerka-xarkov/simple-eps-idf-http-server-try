@@ -4,7 +4,6 @@
 #include "esp_event.h"
 #include "esp_wifi.h"
 #include "esp_log.h"
-#include "driver/gpio.h"
 #include "lwip/sockets.h"
 
 #define WIFI_CONNECTED_BIT BIT0

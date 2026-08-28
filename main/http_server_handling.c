@@ -322,7 +322,7 @@ static void configure_led(void)
     ESP_LOGI(TAG, "LED Configured!\n");
 }
 
-esp_err_t open_fn(httpd_handle_t hd, int sockfd)
+static esp_err_t open_fn(httpd_handle_t hd, int sockfd)
 {
     int val = 1;
     // Disable Nagle's algorithm for instant packet delivery
@@ -330,13 +330,13 @@ esp_err_t open_fn(httpd_handle_t hd, int sockfd)
     return ESP_OK;
 }
 
-void register_http_handlers()
+static void register_http_handlers()
 {
 
     const httpd_uri_t index_uri = {
         .uri = "/",
         .method = HTTP_GET,
-        .handler = get_main_page,
+        .handler = get_main_page_handler,
         .user_ctx = NULL,
     };
     const httpd_uri_t index_uri_cached = {
@@ -426,7 +426,7 @@ void register_http_handlers()
 
 void start_webserver()
 {
-    configure_led();
+    // configure_led();
     init_global_zlib();
     init_http_info_requests_counter();
     initialize_touch_events();

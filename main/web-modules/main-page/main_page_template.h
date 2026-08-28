@@ -1,3 +1,5 @@
+#include "../assets/template_helpers.h"
+
 typedef struct
 {
     char *title;
@@ -15,5 +17,4 @@ typedef struct
     main_page_template_post_t *posts;
 } main_page_template_context_t;
 
-typedef void (*template_data_callback)(void *context, char *template_part);
-void get_main_template(main_page_template_context_t *data, void *cb_context, template_data_callback cb);
+void get_main_page_template(void *data, template_callback_context_t *cb_context, template_callback_t cb);

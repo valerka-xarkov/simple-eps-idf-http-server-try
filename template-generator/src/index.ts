@@ -10,11 +10,11 @@ function prepareFormatter(formatterCode: string, index: number): string {
     if (parts[1] === '%s') {
         return `cb(cb_context, ${parts[0]});\r\n`;
     }
-    // data->age | %d | 20
+    // data->age | %d 
     const code: string[] = [];
     const varName = `buf${index}`;
     code.push('\r\n');
-    code.push(`char ${varName}[${parts[2]}];\r\n`);
+    code.push(`char ${varName}[20];\r\n`);
     code.push(`sprintf(${varName}, "${parts[1]}", ${parts[0]});\r\n`);
     code.push(`cb(cb_context, ${varName});\r\n`);
     code.push('\r\n');

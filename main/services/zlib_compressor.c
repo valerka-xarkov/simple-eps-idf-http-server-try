@@ -163,7 +163,6 @@ esp_err_t compress_string_to_buffer(char *input_string, int string_len, uint8_t 
     *out_buffer = dest_buffer;
     *out_size = total_written;
 
-    ESP_LOGI(TAG, "String successfully compressed. Original: %u bytes -> Compressed: %u bytes.", string_len, total_written);
     return ESP_OK;
 }
 

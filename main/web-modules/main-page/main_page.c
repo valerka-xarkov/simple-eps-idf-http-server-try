@@ -1,30 +1,12 @@
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "main_page_template.h"
-#include "../../services/zlib_compressor.h"
-#define MEM_ALLOC_STEP 1024
+#include "../assets/template_helpers.h"
 
 static const char *TAG = "MAIN-PAGE";
 static uint8_t *main_page_compressed = NULL;
 static size_t main_page_compressed_len;
 
-static char *main_page_content;
-static int main_page_buffer_size = MEM_ALLOC_STEP;
-static int cur_content_size = 0;
-
-static void callback(void *context, char *template_part)
-{
-    int len = strlen(template_part);
-    int new_len = cur_content_size + len;
-    if (main_page_buffer_size < new_len)
-    {
-        int new_capacity = new_len - main_page_buffer_size < MEM_ALLOC_STEP ? new_len + MEM_ALLOC_STEP : new_len;
-        uint8_t *new_dest = heap_caps_realloc(main_page_content, new_capacity, MALLOC_CAP_SPIRAM);
-        main_page_content = (char *)new_dest;
-    }
-    memcpy(main_page_content + cur_content_size, template_part, len);
-    cur_content_size = new_len;
-}
 void initialize_main_page()
 {
     main_page_template_post_t posts[] = {
@@ -46,15 +28,12 @@ void initialize_main_page()
         .test2 = "some-test-2",
         .posts = posts,
     };
-    main_page_content = (char *)heap_caps_malloc(MEM_ALLOC_STEP, MALLOC_CAP_SPIRAM),
 
-    get_main_template(&template_context, NULL, callback);
-
-    compress_string_to_buffer(main_page_content, cur_content_size, &main_page_compressed, (size_t *)&main_page_compressed_len);
-    heap_caps_free(main_page_content);
+    get_compressed_template(get_main_page_template, &template_context, &main_page_compressed, (size_t *)&main_page_compressed_len);
+    ESP_LOGI(TAG, "Main page templage initialized, length %d", main_page_compressed_len);
 }
 
-esp_err_t get_main_page(httpd_req_t *req)
+esp_err_t get_main_page_handler(httpd_req_t *req)
 {
     httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
     return httpd_resp_send(req, (char *)main_page_compressed, main_page_compressed_len);
