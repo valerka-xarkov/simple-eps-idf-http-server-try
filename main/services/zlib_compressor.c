@@ -4,7 +4,6 @@
 #include "zlib_compressor.h"
 #include "esp_heap_caps.h"
 
-#define CHUNK_OUT_SIZE 2048
 static z_stream g_strm;
 static uint8_t *out_buf = NULL;
 static char *in_buf = NULL;
@@ -114,12 +113,9 @@ esp_err_t compress_string_to_buffer(char *input_string, int string_len, uint8_t 
     g_strm.avail_in = (uInt)string_len;
 
     // Allocate an initial dynamic destination buffer array space safely
-    size_t current_capacity = CHUNK_OUT_SIZE;
-    uint8_t *dest_buffer = (uint8_t *)heap_caps_malloc(current_capacity, MALLOC_CAP_SPIRAM);
-    if (dest_buffer == NULL)
-    {
-        return ESP_ERR_NO_MEM;
-    }
+    size_t current_capacity = 0;
+    uint8_t *dest_buffer = NULL;
+
     size_t total_written = 0;
 
     int ret;
@@ -127,28 +123,30 @@ esp_err_t compress_string_to_buffer(char *input_string, int string_len, uint8_t 
     do
     {
         g_strm.next_out = out_buf;
-        g_strm.avail_out = CHUNK_OUT_SIZE;
+        g_strm.avail_out = COMPRESSOR_BUFFER_SIZE;
 
         // Since the entire payload data is visible in next_in, tell zlib to finish the stream output straight away
         ret = deflate(&g_strm, Z_FINISH);
         if (ret == Z_STREAM_ERROR)
         {
             ESP_LOGE(TAG, "Critical string processing engine deflation failure");
-            heap_caps_free(dest_buffer);
+            if (dest_buffer != NULL)
+                heap_caps_free(dest_buffer);
             return ESP_FAIL;
         }
 
-        size_t produced = CHUNK_OUT_SIZE - g_strm.avail_out;
+        size_t produced = COMPRESSOR_BUFFER_SIZE - g_strm.avail_out;
         if (produced > 0)
         {
             // Scale out target buffer memory layout if space limitations are hit
             if (total_written + produced > current_capacity)
             {
-                current_capacity += produced; // Dynamically expand precisely by the chunk requirements
+                current_capacity = total_written + produced; // Dynamically expand precisely by the chunk requirements
                 uint8_t *new_dest = heap_caps_realloc(dest_buffer, current_capacity, MALLOC_CAP_SPIRAM);
                 if (new_dest == NULL)
                 {
-                    heap_caps_free(dest_buffer);
+                    if (dest_buffer != NULL)
+                        heap_caps_free(dest_buffer);
                     return ESP_ERR_NO_MEM;
                 }
                 dest_buffer = new_dest;
@@ -168,8 +166,7 @@ esp_err_t compress_string_to_buffer(char *input_string, int string_len, uint8_t 
 
 esp_err_t compress_stream_to_file(FILE *dest_file, data_provider_cb provide_data, void *user_context)
 {
-    int ret = deflateReset(&g_strm);
-    if (ret != Z_OK)
+    if (deflateReset(&g_strm) != Z_OK)
     {
         ESP_LOGE(TAG, "Deflate file engine reset failed");
         return ESP_FAIL;
@@ -178,7 +175,7 @@ esp_err_t compress_stream_to_file(FILE *dest_file, data_provider_cb provide_data
     // Core Loop: Pull dynamic text, compress, write out to storage
     while (true)
     {
-        size_t read_bytes = provide_data(in_buf, sizeof(in_buf), user_context);
+        size_t read_bytes = provide_data(in_buf, COMPRESSOR_BUFFER_SIZE, user_context);
         if (read_bytes == 0)
             break; // Source function is complete
 
@@ -211,8 +208,7 @@ esp_err_t compress_stream_to_file(FILE *dest_file, data_provider_cb provide_data
         g_strm.next_out = out_buf;
         g_strm.avail_out = COMPRESSOR_BUFFER_SIZE;
 
-        ret = deflate(&g_strm, Z_FINISH);
-        if (ret == Z_STREAM_END)
+        if (deflate(&g_strm, Z_FINISH) == Z_STREAM_END)
         {
             finished = true;
         }
@@ -239,13 +235,9 @@ esp_err_t compress_stream_to_buffer(data_provider_cb read_stream_func, void *cxt
         return ESP_FAIL;
     }
 
-    size_t current_capacity = 4096;
-    uint8_t *dest_buffer = (uint8_t *)heap_caps_malloc(current_capacity, MALLOC_CAP_SPIRAM);
+    size_t current_capacity = 0;
+    uint8_t *dest_buffer = NULL;
 
-    if (dest_buffer == NULL)
-    {
-        return ESP_ERR_NO_MEM;
-    }
     size_t total_written = 0;
     bool is_stream_finished = false;
 
@@ -270,11 +262,11 @@ esp_err_t compress_stream_to_buffer(data_provider_cb read_stream_func, void *cxt
             g_strm.next_out = out_buf;
             g_strm.avail_out = COMPRESSOR_BUFFER_SIZE;
 
-            int ret = deflate(&g_strm, Z_NO_FLUSH);
-            if (ret == Z_STREAM_ERROR)
+            if (deflate(&g_strm, Z_NO_FLUSH) == Z_STREAM_ERROR)
             {
                 ESP_LOGE(TAG, "Compression mapping pipeline crash");
-                heap_caps_free(dest_buffer);
+                if (dest_buffer != NULL)
+                    heap_caps_free(dest_buffer);
                 return ESP_FAIL;
             }
 
@@ -287,7 +279,8 @@ esp_err_t compress_stream_to_buffer(data_provider_cb read_stream_func, void *cxt
                     uint8_t *new_dest = heap_caps_realloc(dest_buffer, current_capacity, MALLOC_CAP_SPIRAM);
                     if (new_dest == NULL)
                     {
-                        heap_caps_free(dest_buffer);
+                        if (dest_buffer != NULL)
+                            heap_caps_free(dest_buffer);
                         return ESP_ERR_NO_MEM;
                     }
                     dest_buffer = new_dest;
@@ -308,7 +301,8 @@ esp_err_t compress_stream_to_buffer(data_provider_cb read_stream_func, void *cxt
         flush_ret = deflate(&g_strm, Z_FINISH);
         if (flush_ret == Z_STREAM_ERROR)
         {
-            heap_caps_free(dest_buffer);
+            if (dest_buffer != NULL)
+                heap_caps_free(dest_buffer);
             return ESP_FAIL;
         }
 
@@ -321,7 +315,8 @@ esp_err_t compress_stream_to_buffer(data_provider_cb read_stream_func, void *cxt
                 uint8_t *new_dest = heap_caps_realloc(dest_buffer, current_capacity, MALLOC_CAP_SPIRAM);
                 if (new_dest == NULL)
                 {
-                    heap_caps_free(dest_buffer);
+                    if (dest_buffer != NULL)
+                        heap_caps_free(dest_buffer);
                     return ESP_ERR_NO_MEM;
                 }
                 dest_buffer = new_dest;

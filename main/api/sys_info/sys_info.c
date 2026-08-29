@@ -1,9 +1,9 @@
 #include "cJSON.h"
 #include "esp_http_server.h"
 #include "esp_err.h"
-#include "../services/sys_information.h"
+#include "../../services/sys_information.h"
 #include "esp_log.h"
-#include "../services/request_counter.h"
+#include "../../services/request_counter.h"
 #include "freertos/FreeRTOS.h"
 #include "esp_heap_caps.h"
 

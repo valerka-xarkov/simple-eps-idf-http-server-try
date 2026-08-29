@@ -1,7 +1,7 @@
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "main_page_template.h"
-#include "../assets/template_helpers.h"
+#include "../lib/template_helpers.h"
 
 static const char *TAG = "MAIN-PAGE";
 static uint8_t *main_page_compressed = NULL;

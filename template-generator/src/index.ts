@@ -6,11 +6,11 @@ function getHtmlFiles(): string[] {
 }
 
 function prepareFormatter(formatterCode: string, index: number): string {
+    // data->age | %d 
     const parts = formatterCode.split('|').map(e => e.trim());
     if (parts[1] === '%s') {
         return `cb(cb_context, ${parts[0]});\r\n`;
     }
-    // data->age | %d 
     const code: string[] = [];
     const varName = `buf${index}`;
     code.push('\r\n');

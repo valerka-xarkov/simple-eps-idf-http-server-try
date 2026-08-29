@@ -1,4 +1,4 @@
-#include "../assets/template_helpers.h"
+#include "../lib/template_helpers.h"
 
 typedef struct
 {

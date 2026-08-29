@@ -3,7 +3,7 @@
 #include "esp_http_server.h"
 #include "esp_err.h"
 #include "esp_log.h"
-#include "../services/request_counter.h"
+#include "../../services/request_counter.h"
 
 static char *testing_content = NULL;
 static size_t testing_content_size = 0;

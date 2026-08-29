@@ -1,9 +1,10 @@
 
 
-idf_component_register(SRCS  "main.c" "helpers/time_set_up.c" "services/request_counter.c" "wifi_config.c" "http_server_handling.c" 
-"helpers/fs_operations.c" "services/zlib_compressor.c" "api/requests_quantity.c" "helpers/page_cache_generator.c" "helpers/led.c"
-"services/sys_information.c" "api/sys_info.c" "api/led.c" "helpers/touch_events_helper.c" "web-modules/main-page/main_page.c" 
-"web-modules/main-page/main_page_template.c" "api/performance-testing.c" "web-modules/assets/template_helpers.c"
+idf_component_register(SRCS  "main.c" "helpers/time_set_up.c" "services/request_counter.c" "helpers/wifi_config.c" "http_server_handling.c" 
+"helpers/fs_operations.c" "services/zlib_compressor.c" "api/requests_quantity/requests_quantity.c" "api/error_handlers/error_handlers.c"
+ "helpers/led.c" "services/sys_information.c" "api/sys_info/sys_info.c" "api/led/led.c" "helpers/touch_events_helper.c"
+"web-modules/main-page/main_page.c" "web-modules/main-page/main_page_template.c" "api/performance_testing/performance_testing.c" 
+"web-modules/lib/template_helpers.c" "api/static_files/static_files.c" "api/lib/api_lib.c"
                     INCLUDE_DIRS ".") 
 
 

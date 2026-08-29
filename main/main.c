@@ -1,7 +1,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 
-#include "wifi_config.h"
+#include "helpers/wifi_config.h"
 #include "helpers/fs_operations.h"
 #include "services/sys_information.h"
 #include "helpers/time_set_up.h"

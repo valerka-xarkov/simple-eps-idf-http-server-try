@@ -2,8 +2,8 @@
 #include "esp_http_server.h"
 #include "esp_err.h"
 #include "esp_log.h"
-#include "../services/request_counter.h"
-#include "../helpers/led.h"
+#include "../../services/request_counter.h"
+#include "../../helpers/led.h"
 
 static char *generate_toggle_led_response(bool led_status)
 {
