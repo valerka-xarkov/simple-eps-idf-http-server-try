@@ -1,0 +1,15 @@
+{
+    "name": "Testing project",
+    "icons": [
+        {
+            "src": "/favicon.ico",
+            "type": "image/x-icon",
+            "sizes": "32x32"
+        },
+        {
+            "src": "/img/icon-96.png",
+            "type": "image/png",
+            "sizes": "96x96"
+        }
+    ]
+}

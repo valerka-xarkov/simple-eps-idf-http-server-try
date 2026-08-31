@@ -27,6 +27,8 @@ const char *get_mime_type(const char *filename)
         return "image/x-icon";
     if (strcasecmp(ext, ".svg") == 0)
         return "image/svg+xml";
+    if (strcasecmp(ext, ".webmanifest") == 0)
+        return "application/manifest+json";
 
     return HTTPD_TYPE_OCTET; // Default fallback
 }

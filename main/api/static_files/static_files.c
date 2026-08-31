@@ -162,11 +162,11 @@ esp_err_t static_files_api(httpd_req_t *req)
 {
     http_info_request_happen();
     char prefix[100];
-    int parsed = sscanf(req->uri, "/static/%60s", prefix);
+    int parsed = sscanf(req->uri, "/%95s", prefix);
     page_cache_entry_t *page_data;
     if (parsed != 1 || (page_data = get_page_data(prefix)) == NULL)
     {
-        return http_error_handler(req, HTTPD_404_NOT_FOUND);
+        return http_404_error_handler(req, HTTPD_404_NOT_FOUND);
     };
 
     if (page_data->is_compressed)

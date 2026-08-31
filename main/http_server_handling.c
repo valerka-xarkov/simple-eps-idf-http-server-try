@@ -15,6 +15,7 @@
 #include "api/lib/api_lib.h"
 #include "api/static_files/static_files.h"
 #include "api/error_handlers/error_handlers.h"
+#include "api/image_upload/image_upload.h"
 
 httpd_handle_t server = NULL;
 static const char *TAG = "HTTP-SERVER";
@@ -128,8 +129,13 @@ static void register_http_handlers()
         .method = HTTP_GET,
         .handler = performance_testing_api,
     };
+    const httpd_uri_t api_image_upload_handler = {
+        .uri = "/api/image-upload",
+        .method = HTTP_POST,
+        .handler = upload_image_handler,
+    };
     const httpd_uri_t api_static_files_handled = {
-        .uri = "/static/*",
+        .uri = "/*",
         .method = HTTP_GET,
         .handler = static_files_api,
     };
@@ -142,8 +148,10 @@ static void register_http_handlers()
     httpd_register_uri_handler(server, &get_int_sys_info);
     httpd_register_uri_handler(server, &api_toggle_led_handled);
     httpd_register_uri_handler(server, &api_performance_testing_handled);
+    httpd_register_uri_handler(server, &api_image_upload_handler);
+
+    httpd_register_err_handler(server, HTTPD_404_NOT_FOUND, http_404_error_handler);
     httpd_register_uri_handler(server, &api_static_files_handled);
-    httpd_register_err_handler(server, HTTPD_404_NOT_FOUND, http_error_handler);
 }
 
 void start_webserver()

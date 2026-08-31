@@ -26,7 +26,7 @@ static char *generate_response(struct requests_per_second requests_information[]
         cJSON_AddNumberToObject(statistic_item, "requestsQuantity", requests_quantity);
         cJSON_AddItemToArray(items, statistic_item);
     }
-    char *res = cJSON_PrintUnformatted(root);
+    char *res = cJSON_Print(root);
     cJSON_Delete(root);
     return res;
 }
